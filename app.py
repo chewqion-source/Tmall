@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 from data_loader import (
+    LEGACY_SUMMARY_PRODUCT_ID,
     STORE_FILE_PATTERNS,
     build_summary,
     complete_daily_series,
@@ -18,10 +19,10 @@ from data_loader import (
 )
 
 
-st.set_page_config(page_title="天猫双店日报分析", page_icon="📊", layout="wide")
+st.set_page_config(page_title="天猫四店日报分析", page_icon="📊", layout="wide")
 
 
-@st.cache_data(show_spinner="正在读取并聚合两家店铺的 Excel…")
+@st.cache_data(show_spinner="正在读取并聚合四家店铺的 Excel…")
 def load_dashboard_data(
     source_signature: tuple[tuple[str, str, int, int], ...], schema_version: str
 ):
@@ -51,11 +52,11 @@ def color_profit(value: object) -> str:
 
 with st.sidebar:
     st.header("店铺与数据")
-    with st.expander("两家店铺的数据源", expanded=False):
+    with st.expander("四家店铺的数据源", expanded=False):
         st.caption("每次刷新都会重新扫描桌面，并选取各店铺最新修改的匹配文件：")
         for store, patterns in STORE_FILE_PATTERNS.items():
             st.code(f"{store}：{patterns[0]}.xls / .xlsx / .xlsm", language=None)
-    if st.button("重新读取两家店铺", width="stretch"):
+    if st.button("重新读取四家店铺", width="stretch"):
         st.cache_data.clear()
 
 try:
@@ -69,7 +70,7 @@ try:
         )
         for store, path in sources.items()
     )
-    all_daily, sample = load_dashboard_data(source_signature, "two-stores-v1")
+    all_daily, sample = load_dashboard_data(source_signature, "four-stores-v4")
 except Exception as exc:
     st.error(f"读取失败：{exc}")
     st.stop()
@@ -92,9 +93,15 @@ with st.sidebar:
             f"订单量 {sample['order_count']:.0f}，盈亏 {sample['profit']:.3f}"
         )
 
-st.title("天猫双店日报分析")
+st.title("天猫四店日报分析")
 st.info(f"当前查看：**{selected_store}**　｜　数据截至 {store_daily['date'].max():%Y-%m-%d}")
-st.caption("两家店铺分别读取、分别聚合；相同商品 ID 不会跨店合并。")
+st.caption("四家店铺分别读取、分别聚合；相同商品 ID 不会跨店合并。")
+
+if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
+    st.warning(
+        "该时段使用早期日报模板，没有商品 ID，也没有按商品拆分的订单量和盈亏。"
+        "这里展示的是当日全店销量、快递单量和结余，未错误归入某个单品。"
+    )
 
 selected = complete[complete["product_id"] == selected_product].copy().sort_values("date")
 selected_summary = summary[summary["product_id"] == selected_product].iloc[0]
@@ -240,7 +247,7 @@ styled_summary = summary_view.style.map(color_profit, subset=profit_columns).for
 )
 st.dataframe(styled_summary, width="stretch", hide_index=True, height=520)
 
-st.subheader("两家店铺汇总对比")
+st.subheader("四家店铺汇总对比")
 store_overview = (
     all_daily.groupby("store", as_index=False)
     .agg(
@@ -269,7 +276,7 @@ with st.expander("数据口径与来源"):
 - 店铺是第一层分组，同一商品 ID 在不同店铺中保持独立。
 - 销量取“数量”，订单量取“订单数”，盈亏取“单品结余”。
 - 商品 ID 合并区域覆盖的每个明细行都会归入该商品。
-- 替换桌面同名日报后，文件修改时间与大小会使数据缓存自动更新；也可点击“重新读取两家店铺”。
+- 替换桌面同名日报后，文件修改时间与大小会使数据缓存自动更新；也可点击“重新读取四家店铺”。
 - Excel聚合结果同时写入服务器磁盘缓存；文件内容不变时无需重复解析，文件变化后自动重建。
 - 缺失日期补 0 后计算日增减；前一日为 0 时，百分比环比显示为“—”。
 """

@@ -4,6 +4,8 @@ from tempfile import TemporaryDirectory
 import pandas as pd
 
 from data_loader import (
+    LEGACY_SUMMARY_PRODUCT_ID,
+    MIN_REPORT_DATE,
     complete_daily_series,
     find_store_workbooks,
     load_product_daily,
@@ -28,12 +30,20 @@ def test_converted_workbook_and_merged_sample():
     assert not complete.duplicated(["product_id", "date"]).any()
 
 
-def test_two_desktop_stores_stay_separate():
+def test_four_desktop_stores_stay_separate():
     sources = find_store_workbooks()
     daily = load_store_daily(sources)
-    assert set(daily["store"]) == {"易丽洁", "坐拥宁静"}
+    assert set(daily["store"]) == {"易丽洁", "坐拥宁静", "国货严选", "咖时光"}
     assert daily.groupby("store")["source_file"].nunique().eq(1).all()
     assert not daily.duplicated(["store", "date", "product_id"]).any()
+
+
+def test_kashiguang_filters_dates_before_july():
+    workbook = find_store_workbooks()["咖时光"]
+    daily = load_product_daily_cached(workbook)
+    assert daily["date"].min() == MIN_REPORT_DATE
+    assert LEGACY_SUMMARY_PRODUCT_ID not in set(daily["product_id"])
+    assert ((daily["order_count"] % 1).abs() < 1e-9).all()
 
 
 def test_disk_cache_reuses_unchanged_workbook():

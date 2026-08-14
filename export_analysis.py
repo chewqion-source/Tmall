@@ -32,9 +32,9 @@ summary_all = pd.concat(summary_frames, ignore_index=True)
 
 output_dir = project_dir / "data"
 output_dir.mkdir(exist_ok=True)
-daily.to_csv(output_dir / "两店商品按日聚合.csv", index=False, encoding="utf-8-sig")
-complete_all.to_csv(output_dir / "两店商品跨日变化.csv", index=False, encoding="utf-8-sig")
-summary_all.to_csv(output_dir / "两店商品汇总.csv", index=False, encoding="utf-8-sig")
+daily.to_csv(output_dir / "四店商品按日聚合.csv", index=False, encoding="utf-8-sig")
+complete_all.to_csv(output_dir / "四店商品跨日变化.csv", index=False, encoding="utf-8-sig")
+summary_all.to_csv(output_dir / "四店商品汇总.csv", index=False, encoding="utf-8-sig")
 
 print("sources")
 for store, path in sources.items():

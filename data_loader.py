@@ -19,8 +19,12 @@ SUPPORTED_EXTENSIONS = (".xls", ".xlsx", ".xlsm")
 STORE_FILE_PATTERNS = {
     "易丽洁": ("2026年天猫日报表-易丽洁*",),
     "坐拥宁静": ("2026年坐拥宁静日报表*",),
+    "国货严选": ("2026年国货严选日报表*",),
+    "咖时光": ("2026年咖时光日报表-天猫*",),
 }
-DISK_CACHE_SCHEMA_VERSION = "product-daily-v1"
+LEGACY_SUMMARY_PRODUCT_ID = "全店汇总（早期格式）"
+MIN_REPORT_DATE = pd.Timestamp(2026, 7, 1)
+DISK_CACHE_SCHEMA_VERSION = "product-daily-v4"
 
 
 @dataclass(frozen=True)
@@ -188,6 +192,16 @@ def _find_header(rows: list[list[object]]) -> tuple[int, dict[str, int]]:
     raise ValueError("前 20 行未找到包含 商品ID/数量/单品结余 的标题行")
 
 
+def _find_legacy_header(rows: list[list[object]]) -> tuple[int, dict[str, int]]:
+    """Find the old store-level layout that predates product IDs."""
+    required = {"货号", "数量", "快递单量", "结余"}
+    for row_idx, row in enumerate(rows[:20]):
+        mapping = {_clean_header(value): col_idx for col_idx, value in enumerate(row)}
+        if required.issubset(mapping):
+            return row_idx, mapping
+    raise ValueError("前 20 行未找到可识别的标准或早期日报标题行")
+
+
 def _normalize_product_id(value: object) -> str | None:
     if value is None or value == "":
         return None
@@ -213,6 +227,45 @@ def _number(value: object) -> float:
         return 0.0
 
 
+def _numeric_values(rows: list[list[object]], start_row: int, column: int) -> list[float]:
+    values: list[float] = []
+    for row in rows[start_row:]:
+        if len(row) <= column or row[column] in (None, ""):
+            continue
+        value = pd.to_numeric(row[column], errors="coerce")
+        if not pd.isna(value):
+            values.append(float(value))
+    return values
+
+
+def _fractional_rate(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return sum(abs(value - round(value)) > 1e-6 for value in values) / len(values)
+
+
+def _correct_mislabeled_order_column(
+    sheet: SheetData, header_idx: int, columns: dict[str, int], order_col: int | None
+) -> int | None:
+    """Correct a swapped promotion/order pair only when the data is unambiguous."""
+    if order_col is None or order_col < 1:
+        return order_col
+    header_row = sheet.rows[header_idx]
+    if len(header_row) <= order_col or _clean_header(header_row[order_col - 1]) != "推广花费":
+        return order_col
+
+    labelled_orders = _numeric_values(sheet.rows, header_idx + 1, order_col)
+    adjacent_values = _numeric_values(sheet.rows, header_idx + 1, order_col - 1)
+    if (
+        len(labelled_orders) >= 5
+        and len(adjacent_values) >= 5
+        and _fractional_rate(labelled_orders) >= 0.25
+        and _fractional_rate(adjacent_values) <= 0.05
+    ):
+        return order_col - 1
+    return order_col
+
+
 def _infer_year(path: Path, default: int = 2026) -> int:
     match = re.search(r"(20\d{2})", path.stem)
     return int(match.group(1)) if match else default
@@ -222,11 +275,19 @@ def _extract_sheet(sheet: SheetData, year: int) -> list[dict[str, object]]:
     date_match = DATE_SHEET_PATTERN.fullmatch(sheet.name.strip())
     if not date_match:
         return []
+    sheet_date = pd.Timestamp(year, int(date_match.group(1)), int(date_match.group(2)))
+    if sheet_date < MIN_REPORT_DATE:
+        return []
 
-    header_idx, columns = _find_header(sheet.rows)
+    try:
+        header_idx, columns = _find_header(sheet.rows)
+    except ValueError:
+        return _extract_legacy_sheet(sheet, year, date_match)
     product_col = columns["商品ID"]
     quantity_col = columns["数量"]
-    order_col = columns.get("订单数")
+    order_col = _correct_mislabeled_order_column(
+        sheet, header_idx, columns, columns.get("订单数")
+    )
     profit_col = columns["单品结余"]
     sku_col = columns.get("货号")
 
@@ -255,11 +316,50 @@ def _extract_sheet(sheet: SheetData, year: int) -> list[dict[str, object]]:
         sku = "" if sku_col is None or row[sku_col] is None else str(row[sku_col]).strip()
         records.append(
             {
-                "date": pd.Timestamp(year, int(date_match.group(1)), int(date_match.group(2))),
+                "date": sheet_date,
                 "sheet": sheet.name,
                 "product_id": product_id,
                 "sales_qty": _number(row[quantity_col]),
                 "order_count": _number(row[order_col]) if order_col is not None else 0.0,
+                "profit": _number(row[profit_col]),
+                "sku": sku,
+                "source_row": row_idx + 1,
+            }
+        )
+    return records
+
+
+def _extract_legacy_sheet(
+    sheet: SheetData, year: int, date_match: re.Match[str]
+) -> list[dict[str, object]]:
+    """Preserve old sheets as one clearly labelled store-level aggregate.
+
+    These sheets contain SKU/货号 detail quantities, but only one store-level
+    快递单量 and 结余. Emitting all detail rows under a synthetic ID keeps the
+    totals correct without falsely assigning the whole-store profit to one SKU.
+    """
+    header_idx, columns = _find_legacy_header(sheet.rows)
+    sku_col = columns["货号"]
+    quantity_col = columns["数量"]
+    order_col = columns["快递单量"]
+    profit_col = columns["结余"]
+    max_needed_col = max(sku_col, quantity_col, order_col, profit_col)
+    records: list[dict[str, object]] = []
+
+    for row_idx in range(header_idx + 1, len(sheet.rows)):
+        row = sheet.rows[row_idx]
+        if len(row) <= max_needed_col:
+            continue
+        sku = "" if row[sku_col] is None else str(row[sku_col]).strip()
+        if not sku or sku in {"合计", "总计", "小计"}:
+            continue
+        records.append(
+            {
+                "date": pd.Timestamp(year, int(date_match.group(1)), int(date_match.group(2))),
+                "sheet": sheet.name,
+                "product_id": LEGACY_SUMMARY_PRODUCT_ID,
+                "sales_qty": _number(row[quantity_col]),
+                "order_count": _number(row[order_col]),
                 "profit": _number(row[profit_col]),
                 "sku": sku,
                 "source_row": row_idx + 1,
