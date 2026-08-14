@@ -13,6 +13,7 @@ from data_loader import (
     load_store_daily,
     validate_known_sample,
 )
+from upload_manager import STORE_CANONICAL_BASENAMES, install_uploaded_workbooks
 
 
 def test_converted_workbook_and_merged_sample():
@@ -56,3 +57,31 @@ def test_disk_cache_reuses_unchanged_workbook():
         pd.testing.assert_frame_equal(first, second)
         assert len(list(Path(cache_dir).glob("*.pkl"))) == 1
         assert len(list(Path(cache_dir).glob("*.json"))) == 1
+
+
+def test_finance_upload_validates_archives_and_installs_atomically():
+    workbook = Path(__file__).resolve().parent / "data" / "2026年天猫日报表-易丽洁8月.xlsx"
+    with TemporaryDirectory() as data_dir_value:
+        data_dir = Path(data_dir_value)
+        target = data_dir / f"{STORE_CANONICAL_BASENAMES['易丽洁']}.xlsx"
+        target.write_bytes(b"old workbook placeholder")
+
+        try:
+            install_uploaded_workbooks(
+                {"易丽洁": ("invalid.xls", b"not an excel workbook")}, data_dir
+            )
+        except Exception:
+            pass
+        else:
+            raise AssertionError("invalid workbook should not be installed")
+        assert target.read_bytes() == b"old workbook placeholder"
+
+        results = install_uploaded_workbooks(
+            {"易丽洁": (workbook.name, workbook.read_bytes())}, data_dir
+        )
+        assert len(results) == 1
+        assert results[0].store == "易丽洁"
+        assert results[0].date_sheets == 13
+        assert target.read_bytes() == workbook.read_bytes()
+        assert len(list((data_dir / "archive" / "易丽洁").glob("*.xlsx"))) == 1
+        assert (data_dir / "upload-history.jsonl").is_file()

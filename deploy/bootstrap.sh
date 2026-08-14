@@ -9,6 +9,8 @@ sudo install -d -o ubuntu -g ubuntu /opt/tmall-dashboard
 sudo install -d -o ubuntu -g ubuntu /opt/tmall-dashboard/data
 sudo install -d -o ubuntu -g ubuntu /opt/tmall-dashboard/.cache
 sudo install -d -o ubuntu -g ubuntu /opt/tmall-dashboard/releases
+sudo install -d -o ubuntu -g ubuntu /opt/tmall-dashboard/data/archive
+sudo install -d -m 750 -o root -g ubuntu /etc/tmall-dashboard
 
 cd /opt/tmall-dashboard
 if [[ ! -x .venv/bin/python ]]; then
@@ -18,11 +20,12 @@ fi
 .venv/bin/python -m pip install -r current/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 sudo install -m 644 current/deploy/tmall-dashboard.service /etc/systemd/system/tmall-dashboard.service
+sudo install -m 644 current/deploy/tmall-upload.service /etc/systemd/system/tmall-upload.service
 sudo install -m 644 current/deploy/nginx-tmall-dashboard.conf /etc/nginx/sites-available/tmall-dashboard
 sudo ln -sfn /etc/nginx/sites-available/tmall-dashboard /etc/nginx/sites-enabled/tmall-dashboard
 sudo rm -f /etc/nginx/sites-enabled/default
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now tmall-dashboard
+sudo systemctl enable --now tmall-dashboard tmall-upload
 sudo nginx -t
 sudo systemctl enable --now nginx

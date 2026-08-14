@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -58,6 +59,11 @@ with st.sidebar:
             st.code(f"{store}：{patterns[0]}.xls / .xlsx / .xlsm", language=None)
     if st.button("重新读取四家店铺", width="stretch"):
         st.cache_data.clear()
+    st.link_button(
+        "财务上传报表",
+        os.environ.get("TMALL_UPLOAD_URL", "http://150.158.133.102:8080/upload/"),
+        width="stretch",
+    )
 
 try:
     sources = find_store_workbooks()

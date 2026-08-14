@@ -12,6 +12,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=HOME=/home/ubuntu
 Environment=TMALL_DATA_DIR=/opt/tmall-dashboard/data
 Environment=TMALL_CACHE_DIR=/opt/tmall-dashboard/.cache
+Environment=TMALL_UPLOAD_URL=http://150.158.133.102:8080/upload/
 ExecStart=/opt/tmall-dashboard/.venv/bin/python -m streamlit run app.py --server.address=127.0.0.1 --server.port=8501 --server.headless=true --server.maxUploadSize=25 --browser.gatherUsageStats=false
 Restart=always
 RestartSec=5
