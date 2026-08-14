@@ -55,7 +55,7 @@ with st.sidebar:
         st.caption("每次刷新都会重新扫描桌面，并选取各店铺最新修改的匹配文件：")
         for store, patterns in STORE_FILE_PATTERNS.items():
             st.code(f"{store}：{patterns[0]}.xls / .xlsx / .xlsm", language=None)
-    if st.button("重新读取两家店铺", use_container_width=True):
+    if st.button("重新读取两家店铺", width="stretch"):
         st.cache_data.clear()
 
 try:
@@ -155,7 +155,7 @@ with left:
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
-    st.plotly_chart(sales_fig, use_container_width=True)
+    st.plotly_chart(sales_fig, width="stretch")
 
 with right:
     st.subheader("盈亏趋势")
@@ -174,7 +174,7 @@ with right:
     profit_fig.update_layout(
         xaxis_title="日期", yaxis_title="盈亏（元）", margin=dict(l=10, r=10, t=20, b=10)
     )
-    st.plotly_chart(profit_fig, use_container_width=True)
+    st.plotly_chart(profit_fig, width="stretch")
 
 st.subheader("销量 / 盈亏日环比变化")
 changes = selected[
@@ -200,7 +200,7 @@ styled_changes = changes.style.map(color_profit, subset=["盈亏", "盈亏日增
         "盈亏变化率": lambda value: "—" if pd.isna(value) else f"{value:+.1%}",
     }
 )
-st.dataframe(styled_changes, use_container_width=True, hide_index=True)
+st.dataframe(styled_changes, width="stretch", hide_index=True)
 
 st.subheader(f"{selected_store}商品汇总表")
 st.caption("绿色为盈利，红色为亏损；可点击列标题排序。")
@@ -238,7 +238,7 @@ styled_summary = summary_view.style.map(color_profit, subset=profit_columns).for
         "日均盈亏": "{:+,.2f}",
     }
 )
-st.dataframe(styled_summary, use_container_width=True, hide_index=True, height=520)
+st.dataframe(styled_summary, width="stretch", hide_index=True, height=520)
 
 st.subheader("两家店铺汇总对比")
 store_overview = (
@@ -259,7 +259,7 @@ store_overview["截止日期"] = store_overview["截止日期"].dt.strftime("%Y-
 styled_overview = store_overview.style.map(color_profit, subset=["总盈亏"]).format(
     {"总销量": "{:,.0f}", "总订单量": "{:,.0f}", "总盈亏": "{:+,.2f}"}
 )
-st.dataframe(styled_overview, use_container_width=True, hide_index=True)
+st.dataframe(styled_overview, width="stretch", hide_index=True)
 
 with st.expander("数据口径与来源"):
     source_lines = "\n".join(f"- {store}：`{path}`" for store, path in sources.items())
