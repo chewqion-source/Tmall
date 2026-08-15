@@ -31,13 +31,21 @@ def api_base_url() -> str:
 
 
 def api_key() -> str:
-    return os.environ.get("GRSAI_API_KEY", "").strip()
+    return os.environ.get("GRSAI_API_KEY", "").strip().strip('"').strip("'")
+
+
+def validate_api_key(key: str) -> None:
+    if not key:
+        raise RuntimeError("服务器尚未配置 GRS AI API Key")
+    if not key.isascii():
+        raise RuntimeError("GRS AI API Key 里包含中文或特殊字符，请在服务器重新填写纯英文数字的密钥")
+    if any(char.isspace() for char in key):
+        raise RuntimeError("GRS AI API Key 里包含空格或换行，请在服务器重新填写密钥")
 
 
 def api_request(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     key = api_key()
-    if not key:
-        raise RuntimeError("服务器尚未配置 GRS AI API Key")
+    validate_api_key(key)
 
     data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
@@ -56,6 +64,8 @@ def api_request(method: str, path: str, payload: dict[str, Any] | None = None) -
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="ignore")
         raise RuntimeError(f"接口返回错误 {exc.code}：{body[:500]}") from exc
+    except UnicodeEncodeError as exc:
+        raise RuntimeError("接口请求编码失败，请检查 API Key 是否填成了中文说明文字") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"接口连接失败：{exc}") from exc
     try:
