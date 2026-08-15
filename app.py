@@ -219,10 +219,8 @@ metric_cols[3].metric(
 st.subheader(f"{selected_store}全店趋势（{trend_range}）")
 store_left, store_right = st.columns(2)
 with store_left:
-    st.caption("全店销量 / 订单量")
     render_sales_orders_trend(trend_store)
 with store_right:
-    st.caption("全店盈亏")
     render_profit_trend(trend_store)
 
 left, right = st.columns(2)
