@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,6 +76,53 @@ def api_request(method: str, path: str, payload: dict[str, Any] | None = None) -
         raise RuntimeError(f"接口返回不是 JSON：{raw[:500]}") from exc
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_account_credits() -> int | float:
+    key = api_key()
+    validate_api_key(key)
+    query = urllib.parse.urlencode({"apikey": key})
+    request = urllib.request.Request(
+        f"{api_base_url()}/client/common/getCredits?{query}",
+        headers={"Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw = response.read().decode("utf-8")
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise RuntimeError("暂时无法查询积分") from exc
+
+    try:
+        result = json.loads(raw)
+        credits = result["data"]["credits"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise RuntimeError("积分接口返回格式异常") from exc
+    if not isinstance(credits, (int, float)):
+        raise RuntimeError("积分接口未返回有效余额")
+    return credits
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_image_for_download(image_url: str) -> tuple[bytes, str]:
+    request = urllib.request.Request(image_url, headers={"Accept": "image/*"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            image_bytes = response.read()
+            content_type = response.headers.get_content_type()
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise RuntimeError("图片下载准备失败") from exc
+    if not image_bytes:
+        raise RuntimeError("图片内容为空")
+    return image_bytes, content_type
+
+
+def image_download_name(content_type: str) -> str:
+    extension = mimetypes.guess_extension(content_type) or ".png"
+    if extension == ".jpe":
+        extension = ".jpg"
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"grsai-{timestamp}{extension}"
+
+
 def extract_image_url(response: dict[str, Any]) -> str | None:
     results = response.get("results")
     if isinstance(results, list) and results:
@@ -100,7 +149,7 @@ def result_id(response: dict[str, Any]) -> str | None:
     return None
 
 
-def generate_image(prompt: str, aspect_ratio: str) -> tuple[str, dict[str, Any]]:
+def generate_image(prompt: str, aspect_ratio: str) -> str:
     payload = {
         "model": MODEL_NAME,
         "prompt": prompt,
@@ -111,7 +160,7 @@ def generate_image(prompt: str, aspect_ratio: str) -> tuple[str, dict[str, Any]]
     response = api_request("POST", "/v1/api/generate", payload)
     url = extract_image_url(response)
     if url:
-        return url, response
+        return url
 
     task_id = result_id(response)
     if not task_id:
@@ -122,7 +171,7 @@ def generate_image(prompt: str, aspect_ratio: str) -> tuple[str, dict[str, Any]]
         result = api_request("GET", f"/v1/api/result?id={task_id}")
         url = extract_image_url(result)
         if url:
-            return url, result
+            return url
         status = str(result.get("status", "")).lower()
         if status in {"failed", "error", "cancelled"}:
             raise RuntimeError(f"生图任务失败：{result}")
@@ -174,7 +223,17 @@ with st.sidebar:
         width="stretch",
     )
 
-st.title("AI 生图")
+title_col, credits_col = st.columns([3, 1], vertical_alignment="center")
+with title_col:
+    st.title("AI 生图")
+with credits_col:
+    try:
+        credits = get_account_credits()
+    except Exception:
+        st.metric("GRS AI 剩余积分", "暂不可用")
+    else:
+        credits_text = f"{credits:,.0f}" if float(credits).is_integer() else f"{credits:,.2f}"
+        st.metric("GRS AI 剩余积分", credits_text)
 
 if not api_key():
     st.warning("服务器尚未配置 GRS AI API Key。配置后即可生成图片。")
@@ -198,16 +257,35 @@ if submitted:
     else:
         try:
             with st.spinner("正在生成图片，可能需要几十秒..."):
-                image_url, raw_response = generate_image(prompt.strip(), aspect_ratio)
+                image_url = generate_image(prompt.strip(), aspect_ratio)
                 save_history(prompt.strip(), aspect_ratio, image_url)
         except Exception as exc:
             st.error(f"生成失败：{exc}")
         else:
-            st.success("生成成功")
-            st.image(image_url, width=520)
-            st.link_button("打开原图", image_url, width="stretch")
-            with st.expander("接口返回"):
-                st.json(raw_response)
+            st.session_state["latest_generated_image"] = {
+                "url": image_url,
+                "prompt": prompt.strip(),
+                "aspect_ratio": aspect_ratio,
+            }
+
+latest_image = st.session_state.get("latest_generated_image")
+if latest_image:
+    st.success("生成成功")
+    st.image(latest_image["url"], width=520)
+    try:
+        image_bytes, image_mime = fetch_image_for_download(latest_image["url"])
+    except Exception as exc:
+        st.warning(f"暂时无法准备下载：{exc}")
+    else:
+        st.download_button(
+            "下载图片",
+            data=image_bytes,
+            file_name=image_download_name(image_mime),
+            mime=image_mime,
+            type="primary",
+            width="stretch",
+            on_click="ignore",
+        )
 
 history = load_history()
 if history:
