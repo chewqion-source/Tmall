@@ -131,8 +131,6 @@ def render_profit_trend(data: pd.DataFrame) -> None:
 
 with st.sidebar:
     st.header("店铺与数据")
-    if st.button("重新读取四家店铺", width="stretch"):
-        st.cache_data.clear()
     st.link_button(
         "财务上传报表",
         os.environ.get("TMALL_UPLOAD_URL", "http://150.158.133.102:8080/upload/"),
@@ -330,7 +328,7 @@ with st.expander("数据口径与来源"):
 - 店铺是第一层分组，同一商品 ID 在不同店铺中保持独立。
 - 销量取“数量”，订单量取“订单数”，盈亏取“单品结余”。
 - 商品 ID 合并区域覆盖的每个明细行都会归入该商品。
-- 替换桌面同名日报后，文件修改时间与大小会使数据缓存自动更新；也可点击“重新读取四家店铺”。
+- 数据以财务上传页导入到服务器的日报为准；上传成功后，文件修改时间与大小会使数据缓存自动更新。
 - Excel聚合结果同时写入服务器磁盘缓存；文件内容不变时无需重复解析，文件变化后自动重建。
 - 缺失日期补 0 后计算日增减；前一日为 0 时，百分比环比显示为“—”。
 """
