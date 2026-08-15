@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+*.log
+.streamlit/
+.deploy/
+.cache/
+dist/
+data/*
+!data/.gitkeep
