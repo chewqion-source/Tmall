@@ -216,6 +216,14 @@
           </div>
 
           <div class="field">
+            <label>综合退款率</label>
+            <div class="input-wrap">
+              <input id="refundRate" type="number" step="0.01" min="0" max="100" value="0">
+              <span class="suffix">%</span>
+            </div>
+          </div>
+
+          <div class="field">
             <label>预估推广费 / 单</label>
             <div class="input-wrap">
               <span class="prefix">¥</span>
@@ -224,14 +232,15 @@
           </div>
 
           <div class="field full">
-            <div class="hint">说明：ROI = 成交金额 ÷ 推广费。税点、平台扣点均按售价比例计算。</div>
+            <div class="hint">说明：ROI = 有效成交金额 ÷ 推广费。有效成交金额会扣除综合退款率。</div>
           </div>
         </div>
 
         <div class="formula">
           <h3>计算逻辑</h3>
-          <p>保本推广费 = 售价 - 货价 - 快递费 - 税费 - 平台扣费</p>
-          <p>保本 ROI = 售价 ÷ 保本推广费</p>
+          <p>有效成交金额 = 售价 × (1 - 综合退款率)</p>
+          <p>保本推广费 = 有效成交金额 - 货价 - 快递费 - 税费 - 平台扣费</p>
+          <p>保本 ROI = 有效成交金额 ÷ 保本推广费</p>
           <p>当前单笔利润 = 保本推广费 - 预估推广费</p>
         </div>
       </section>
@@ -270,6 +279,14 @@
             <div class="k">平台扣费</div>
             <div class="v" id="platformFee">¥0.00</div>
           </div>
+          <div class="stat">
+            <div class="k">预计退款损耗</div>
+            <div class="v" id="refundLoss">¥0.00</div>
+          </div>
+          <div class="stat">
+            <div class="k">有效成交金额</div>
+            <div class="v" id="effectiveRevenue">¥0.00</div>
+          </div>
         </div>
 
         <div id="status" class="status neutral">请输入有效数据</div>
@@ -280,7 +297,7 @@
   </div>
 
   <script>
-    const ids = ["cost","price","shipping","taxRate","platformRate","adCost"];
+    const ids = ["cost","price","shipping","taxRate","platformRate","refundRate","adCost"];
     ids.forEach(id => document.getElementById(id).addEventListener("input", calculate));
 
     function num(id) {
@@ -299,18 +316,23 @@
       const shipping = num("shipping");
       const taxRate = num("taxRate") / 100;
       const platformRate = num("platformRate") / 100;
+      const refundRate = Math.min(Math.max(num("refundRate"), 0), 100) / 100;
       const adCost = num("adCost");
 
       const taxFee = price * taxRate;
       const platformFee = price * platformRate;
-      const breakEvenAd = price - cost - shipping - taxFee - platformFee;
-      const breakEvenRoi = breakEvenAd > 0 ? price / breakEvenAd : Infinity;
-      const currentRoi = adCost > 0 ? price / adCost : Infinity;
+      const refundLoss = price * refundRate;
+      const effectiveRevenue = price - refundLoss;
+      const breakEvenAd = effectiveRevenue - cost - shipping - taxFee - platformFee;
+      const breakEvenRoi = breakEvenAd > 0 ? effectiveRevenue / breakEvenAd : Infinity;
+      const currentRoi = adCost > 0 ? effectiveRevenue / adCost : Infinity;
       const profitPerOrder = breakEvenAd - adCost;
       const profit100 = profitPerOrder * 100;
 
       document.getElementById("taxFee").textContent = money(taxFee);
       document.getElementById("platformFee").textContent = money(platformFee);
+      document.getElementById("refundLoss").textContent = money(refundLoss);
+      document.getElementById("effectiveRevenue").textContent = money(effectiveRevenue);
       document.getElementById("breakEvenAd").textContent = money(breakEvenAd);
       document.getElementById("profitPerOrder").textContent = money(profitPerOrder);
       document.getElementById("profit100").textContent = money(profit100);
