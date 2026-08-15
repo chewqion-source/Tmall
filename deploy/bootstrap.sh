@@ -22,11 +22,12 @@ fi
 sudo install -m 644 current/deploy/tmall-dashboard.service /etc/systemd/system/tmall-dashboard.service
 sudo install -m 644 current/deploy/tmall-upload.service /etc/systemd/system/tmall-upload.service
 sudo install -m 644 current/deploy/tmall-koc.service /etc/systemd/system/tmall-koc.service
+sudo install -m 644 current/deploy/tmall-ai-image.service /etc/systemd/system/tmall-ai-image.service
 sudo install -m 644 current/deploy/nginx-tmall-dashboard.conf /etc/nginx/sites-available/tmall-dashboard
 sudo ln -sfn /etc/nginx/sites-available/tmall-dashboard /etc/nginx/sites-enabled/tmall-dashboard
 sudo rm -f /etc/nginx/sites-enabled/default
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now tmall-dashboard tmall-upload tmall-koc
+sudo systemctl enable --now tmall-dashboard tmall-upload tmall-koc tmall-ai-image
 sudo nginx -t
 sudo systemctl enable --now nginx

@@ -27,6 +27,10 @@
 
 服务器提供独立达人管理地址：`http://150.158.133.102/koc/`。可在页面手动新增达人，当前达人表保存在服务器数据目录 `data/koc_management.xlsx`，每次保存前旧表会归档到 `data/archive/达人管理/`，这些业务数据不进入 Git 仓库。
 
+## AI 生图
+
+服务器提供独立 AI 生图地址：`http://150.158.133.102/ai-image/`。页面调用 Grsai 的 `gpt-image-2` 接口，API Key 通过服务器 `/etc/tmall-dashboard/ai.env` 中的 `GRSAI_API_KEY` 配置，不进入 Git 仓库。
+
 ## 启动
 
 本项目目录已准备好运行环境时，直接执行：

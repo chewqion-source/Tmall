@@ -1,0 +1,24 @@
+[Unit]
+Description=Tmall AI Image Generator (Streamlit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/tmall-dashboard/current
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/ubuntu
+Environment=TMALL_DATA_DIR=/opt/tmall-dashboard/data
+Environment=TMALL_DASHBOARD_URL=http://150.158.133.102/
+Environment=TMALL_ROI_URL=http://150.158.133.102/roi/
+Environment=TMALL_KOC_URL=http://150.158.133.102/koc/
+EnvironmentFile=-/etc/tmall-dashboard/ai.env
+ExecStart=/opt/tmall-dashboard/.venv/bin/python -m streamlit run ai_image_app.py --server.address=127.0.0.1 --server.port=8504 --server.baseUrlPath=ai-image --server.headless=true --server.maxUploadSize=25 --browser.gatherUsageStats=false
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
