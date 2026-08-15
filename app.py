@@ -179,7 +179,6 @@ with st.sidebar:
 
 st.title("天猫四店日报分析")
 st.info(f"当前查看：**{selected_store}**　｜　数据截至 {store_daily['date'].max():%Y-%m-%d}")
-st.caption("四家店铺分别读取、分别聚合；相同商品 ID 不会跨店合并。")
 
 if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
     st.warning(
@@ -319,17 +318,3 @@ styled_overview = store_overview.style.map(color_profit, subset=["总盈亏"]).f
     {"总销量": "{:,.0f}", "总订单量": "{:,.0f}", "总盈亏": "{:+,.2f}"}
 )
 st.dataframe(styled_overview, width="stretch", hide_index=True)
-
-with st.expander("数据口径与来源"):
-    source_lines = "\n".join(f"- {store}：`{path}`" for store, path in sources.items())
-    st.markdown(
-        f"""
-{source_lines}
-- 店铺是第一层分组，同一商品 ID 在不同店铺中保持独立。
-- 销量取“数量”，订单量取“订单数”，盈亏取“单品结余”。
-- 商品 ID 合并区域覆盖的每个明细行都会归入该商品。
-- 数据以财务上传页导入到服务器的日报为准；上传成功后，文件修改时间与大小会使数据缓存自动更新。
-- Excel聚合结果同时写入服务器磁盘缓存；文件内容不变时无需重复解析，文件变化后自动重建。
-- 缺失日期补 0 后计算日增减；前一日为 0 时，百分比环比显示为“—”。
-"""
-    )
