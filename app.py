@@ -73,6 +73,62 @@ def filter_trend_range(data: pd.DataFrame, range_label: str) -> pd.DataFrame:
     return filtered if not filtered.empty else data.tail(1)
 
 
+def render_sales_orders_trend(data: pd.DataFrame) -> None:
+    sales_fig = make_subplots(specs=[[{"secondary_y": True}]])
+    sales_fig.add_trace(
+        go.Scatter(
+            x=data["date"],
+            y=data["sales_qty"],
+            name="销量",
+            mode="lines+markers",
+            line=dict(color="#2563eb", width=3),
+            marker=dict(size=7),
+            hovertemplate="销量 %{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    sales_fig.add_trace(
+        go.Scatter(
+            x=data["date"],
+            y=data["order_count"],
+            name="订单量",
+            mode="lines+markers",
+            line=dict(color="#f59e0b", width=3, dash="dot"),
+            marker=dict(size=7),
+            hovertemplate="订单量 %{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+    sales_fig.update_xaxes(title_text="日期")
+    sales_fig.update_yaxes(title_text="销量", secondary_y=False)
+    sales_fig.update_yaxes(title_text="订单量", secondary_y=True, rangemode="tozero")
+    sales_fig.update_layout(
+        margin=dict(l=10, r=10, t=20, b=10),
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    st.plotly_chart(sales_fig, width="stretch")
+
+
+def render_profit_trend(data: pd.DataFrame) -> None:
+    profit_colors = ["#16a34a" if value >= 0 else "#dc2626" for value in data["profit"]]
+    profit_fig = go.Figure(
+        go.Bar(
+            x=data["date"],
+            y=data["profit"],
+            marker_color=profit_colors,
+            text=[f"{value:+.2f}" for value in data["profit"]],
+            textposition="outside",
+            hovertemplate="日期 %{x|%m-%d}<br>盈亏 ¥%{y:,.2f}<extra></extra>",
+        )
+    )
+    profit_fig.add_hline(y=0, line_color="#64748b", line_width=1)
+    profit_fig.update_layout(
+        xaxis_title="日期", yaxis_title="盈亏（元）", margin=dict(l=10, r=10, t=20, b=10)
+    )
+    st.plotly_chart(profit_fig, width="stretch")
+
+
 with st.sidebar:
     st.header("店铺与数据")
     if st.button("重新读取四家店铺", width="stretch"):
@@ -132,6 +188,12 @@ selected = complete[complete["product_id"] == selected_product].copy().sort_valu
 trend_selected = filter_trend_range(selected, trend_range)
 selected_summary = summary[summary["product_id"] == selected_product].iloc[0]
 latest = selected.iloc[-1]
+store_trend = (
+    store_daily.groupby(["date", "sheet"], as_index=False)
+    .agg(sales_qty=("sales_qty", "sum"), order_count=("order_count", "sum"), profit=("profit", "sum"))
+    .sort_values("date", ignore_index=True)
+)
+trend_store = filter_trend_range(store_trend, trend_range)
 
 metric_cols = st.columns(4)
 metric_cols[0].metric("累计销量", f"{selected_summary['total_sales']:,.0f}")
@@ -152,62 +214,23 @@ metric_cols[3].metric(
     delta=signed(latest["profit_change"]) if pd.notna(latest["profit_change"]) else None,
 )
 
+st.subheader(f"{selected_store}全店趋势（{trend_range}）")
+store_left, store_right = st.columns(2)
+with store_left:
+    st.caption("全店销量 / 订单量")
+    render_sales_orders_trend(trend_store)
+with store_right:
+    st.caption("全店盈亏")
+    render_profit_trend(trend_store)
+
 left, right = st.columns(2)
 with left:
-    st.subheader(f"销量 / 订单量趋势（{trend_range}）")
-    sales_fig = make_subplots(specs=[[{"secondary_y": True}]])
-    sales_fig.add_trace(
-        go.Scatter(
-            x=trend_selected["date"],
-            y=trend_selected["sales_qty"],
-            name="销量",
-            mode="lines+markers",
-            line=dict(color="#2563eb", width=3),
-            marker=dict(size=7),
-            hovertemplate="销量 %{y:,.0f}<extra></extra>",
-        ),
-        secondary_y=False,
-    )
-    sales_fig.add_trace(
-        go.Scatter(
-            x=trend_selected["date"],
-            y=trend_selected["order_count"],
-            name="订单量",
-            mode="lines+markers",
-            line=dict(color="#f59e0b", width=3, dash="dot"),
-            marker=dict(size=7),
-            hovertemplate="订单量 %{y:,.0f}<extra></extra>",
-        ),
-        secondary_y=True,
-    )
-    sales_fig.update_xaxes(title_text="日期")
-    sales_fig.update_yaxes(title_text="销量", secondary_y=False)
-    sales_fig.update_yaxes(title_text="订单量", secondary_y=True, rangemode="tozero")
-    sales_fig.update_layout(
-        margin=dict(l=10, r=10, t=20, b=10),
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-    )
-    st.plotly_chart(sales_fig, width="stretch")
+    st.subheader(f"单品销量 / 订单量趋势（{trend_range}）")
+    render_sales_orders_trend(trend_selected)
 
 with right:
-    st.subheader(f"盈亏趋势（{trend_range}）")
-    profit_colors = ["#16a34a" if value >= 0 else "#dc2626" for value in trend_selected["profit"]]
-    profit_fig = go.Figure(
-        go.Bar(
-            x=trend_selected["date"],
-            y=trend_selected["profit"],
-            marker_color=profit_colors,
-            text=[f"{value:+.2f}" for value in trend_selected["profit"]],
-            textposition="outside",
-            hovertemplate="日期 %{x|%m-%d}<br>盈亏 ¥%{y:,.2f}<extra></extra>",
-        )
-    )
-    profit_fig.add_hline(y=0, line_color="#64748b", line_width=1)
-    profit_fig.update_layout(
-        xaxis_title="日期", yaxis_title="盈亏（元）", margin=dict(l=10, r=10, t=20, b=10)
-    )
-    st.plotly_chart(profit_fig, width="stretch")
+    st.subheader(f"单品盈亏趋势（{trend_range}）")
+    render_profit_trend(trend_selected)
 
 st.subheader("销量 / 盈亏日环比变化")
 changes = selected[
