@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hmac
 import os
 from datetime import datetime
 from pathlib import Path
@@ -15,41 +14,11 @@ from upload_manager import install_uploaded_workbooks
 st.set_page_config(page_title="天猫日报上传", page_icon="📤", layout="wide")
 
 
-def require_upload_password() -> None:
-    expected = os.environ.get("TMALL_UPLOAD_PASSWORD", "")
-    if not expected:
-        st.error("服务器尚未配置财务上传口令，请联系管理员。")
-        st.stop()
-    if st.session_state.get("upload_authenticated"):
-        return
-
-    st.title("财务日报上传")
-    st.caption("主看板保持公开；上传入口需要单独口令。")
-    with st.form("upload_login"):
-        entered = st.text_input("上传口令", type="password")
-        submitted = st.form_submit_button("进入上传页", width="stretch")
-    if submitted:
-        if hmac.compare_digest(entered, expected):
-            st.session_state["upload_authenticated"] = True
-            st.rerun()
-        else:
-            st.error("上传口令不正确。")
-    st.stop()
-
-
-require_upload_password()
-
 data_dir = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
 dashboard_url = os.environ.get("TMALL_DASHBOARD_URL", "http://150.158.133.102:8080")
 
-header_left, header_right = st.columns([5, 1])
-with header_left:
-    st.title("📤 财务日报上传")
-    st.caption("选择对应店铺文件。系统会先校验，成功后才替换服务器正式报表。")
-with header_right:
-    if st.button("退出上传页", width="stretch"):
-        st.session_state["upload_authenticated"] = False
-        st.rerun()
+st.title("📤 财务日报上传")
+st.caption("选择对应店铺文件。系统会先校验，成功后才替换服务器正式报表。")
 
 st.info("当前统计范围从 2026-07-01 开始；支持 .xls、.xlsx、.xlsm，单个文件最大 25MB。")
 
@@ -126,4 +95,3 @@ with st.expander("上传规则与数据安全"):
 - 主看板刷新后按文件内容指纹自动重建缓存；文件不变时继续命中磁盘缓存。
 """
     )
-
