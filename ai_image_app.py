@@ -244,11 +244,7 @@ with st.form("ai_image_form"):
         height=180,
         placeholder="例如：天猫电商商品主图，干净白底，高级质感，突出产品卖点...",
     )
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        aspect_ratio = st.selectbox("图片尺寸", ASPECT_RATIOS, index=0)
-    with col2:
-        st.caption(f"模型：{MODEL_NAME}；接口节点：{api_base_url()}")
+    aspect_ratio = st.selectbox("图片尺寸", ASPECT_RATIOS, index=0)
     submitted = st.form_submit_button("生成图片", type="primary", width="stretch")
 
 if submitted:
