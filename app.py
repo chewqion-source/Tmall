@@ -87,6 +87,11 @@ with st.sidebar:
         os.environ.get("TMALL_ROI_URL", "http://150.158.133.102/roi/"),
         width="stretch",
     )
+    st.link_button(
+        "达人管理",
+        os.environ.get("TMALL_KOC_URL", "http://150.158.133.102/koc/"),
+        width="stretch",
+    )
 
 try:
     sources = find_store_workbooks()

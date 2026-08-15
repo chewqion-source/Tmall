@@ -1,0 +1,23 @@
+[Unit]
+Description=Tmall KOC Management (Streamlit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/tmall-dashboard/current
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/ubuntu
+Environment=TMALL_DATA_DIR=/opt/tmall-dashboard/data
+Environment=TMALL_KOC_FILE=/opt/tmall-dashboard/data/koc_management.xlsx
+Environment=TMALL_DASHBOARD_URL=http://150.158.133.102/
+Environment=TMALL_ROI_URL=http://150.158.133.102/roi/
+ExecStart=/opt/tmall-dashboard/.venv/bin/python -m streamlit run koc_app.py --server.address=127.0.0.1 --server.port=8503 --server.baseUrlPath=koc --server.headless=true --server.maxUploadSize=25 --browser.gatherUsageStats=false
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
