@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import mimetypes
 import os
 from pathlib import Path
 
@@ -48,6 +50,21 @@ def color_profit(value: object) -> str:
     if number < 0:
         return "color: #b91c1c; background-color: #fee2e2; font-weight: 700"
     return "color: #475569"
+
+
+@st.cache_data(show_spinner=False)
+def load_product_thumbnails(store: str) -> dict[str, str]:
+    image_dir = Path(__file__).resolve().parent / "static" / "product_images" / store
+    if not image_dir.exists():
+        return {}
+    thumbnails: dict[str, str] = {}
+    for image_path in image_dir.iterdir():
+        if not image_path.is_file():
+            continue
+        mime_type = mimetypes.guess_type(image_path.name)[0] or "image/webp"
+        encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+        thumbnails[image_path.stem] = f"data:{mime_type};base64,{encoded}"
+    return thumbnails
 
 
 TREND_RANGE_OPTIONS = ("今日", "昨日", "3天", "7天", "15天", "近一个月", "近半年")
@@ -277,6 +294,8 @@ summary_view = summary.rename(
         "avg_daily_profit": "日均盈亏",
     }
 )
+product_thumbnails = load_product_thumbnails(selected_store)
+summary_view.insert(0, "商品图", summary_view["商品ID"].map(product_thumbnails).fillna(""))
 profit_columns = ["累计盈亏", "最新盈亏", "最新盈亏增减", "日均盈亏"]
 styled_summary = summary_view.style.map(color_profit, subset=profit_columns).format(
     {
@@ -293,7 +312,14 @@ styled_summary = summary_view.style.map(color_profit, subset=profit_columns).for
         "日均盈亏": "{:+,.2f}",
     }
 )
-st.dataframe(styled_summary, width="stretch", hide_index=True, height=520)
+st.dataframe(
+    styled_summary,
+    width="stretch",
+    hide_index=True,
+    height=520,
+    row_height=64,
+    column_config={"商品图": st.column_config.ImageColumn("商品图", width="small")},
+)
 
 st.subheader("四家店铺汇总对比")
 store_overview = (
