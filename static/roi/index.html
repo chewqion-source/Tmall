@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>保本 ROI 计算器</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: rgba(255,255,255,.94);
+      --text: #111827;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --primary: #2563eb;
+      --primary-soft: #eff6ff;
+      --good: #059669;
+      --bad: #dc2626;
+      --warn: #d97706;
+      --shadow: 0 18px 45px rgba(15,23,42,.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(37,99,235,.08), transparent 32%),
+        linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
+      padding: 32px 18px;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    .hero {
+      margin-bottom: 22px;
+      display: flex;
+      gap: 16px;
+      align-items: end;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 42px);
+      letter-spacing: -1.2px;
+    }
+    .hero p { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
+    .badge {
+      background: var(--primary-soft);
+      color: var(--primary);
+      padding: 9px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr;
+      gap: 20px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid rgba(229,231,235,.9);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      padding: 24px;
+      backdrop-filter: blur(12px);
+    }
+    .card h2 { margin: 0 0 18px; font-size: 18px; }
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .field { display: flex; flex-direction: column; gap: 7px; }
+    .field.full { grid-column: 1 / -1; }
+    label { font-size: 13px; color: #374151; font-weight: 700; }
+    .input-wrap { position: relative; }
+    .prefix,.suffix {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #9ca3af;
+      font-size: 14px;
+      pointer-events: none;
+    }
+    .prefix { left: 13px; }
+    .suffix { right: 13px; }
+    input {
+      width: 100%;
+      height: 48px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      outline: none;
+      background: #fff;
+      padding: 0 40px 0 34px;
+      font-size: 16px;
+      transition: .2s;
+    }
+    input:focus {
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 4px rgba(59,130,246,.10);
+    }
+    .hint { color: #9ca3af; font-size: 12px; margin-top: 2px; }
+    .result-main {
+      background: linear-gradient(135deg, #111827, #1f2937);
+      color: white;
+      border-radius: 18px;
+      padding: 22px;
+      margin-bottom: 16px;
+    }
+    .result-main .label { color: #cbd5e1; font-size: 13px; }
+    .result-main .value {
+      font-size: 44px;
+      font-weight: 800;
+      letter-spacing: -1.8px;
+      margin: 6px 0 4px;
+    }
+    .result-main .desc { color: #cbd5e1; font-size: 13px; }
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .stat {
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      padding: 15px;
+      background: #fff;
+    }
+    .stat .k { font-size: 12px; color: var(--muted); margin-bottom: 7px; }
+    .stat .v { font-size: 22px; font-weight: 800; }
+    .status {
+      margin-top: 16px;
+      border-radius: 14px;
+      padding: 14px 15px;
+      font-size: 14px;
+      font-weight: 700;
+      border: 1px solid;
+    }
+    .status.good { color: var(--good); background: #ecfdf5; border-color: #a7f3d0; }
+    .status.bad { color: var(--bad); background: #fef2f2; border-color: #fecaca; }
+    .status.neutral { color: var(--warn); background: #fffbeb; border-color: #fde68a; }
+    .formula {
+      margin-top: 20px;
+      padding: 18px;
+      border-radius: 16px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+    }
+    .formula h3 { margin: 0 0 10px; font-size: 14px; }
+    .formula p { margin: 6px 0; color: #4b5563; font-size: 13px; line-height: 1.65; }
+    .footer { text-align: center; color: #9ca3af; font-size: 12px; margin-top: 18px; }
+    @media (max-width: 820px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      body { padding: 18px 12px; }
+      .card { padding: 18px; border-radius: 18px; }
+      .form-grid, .stats { grid-template-columns: 1fr; }
+      .result-main .value { font-size: 38px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <h1>保本 ROI 计算器</h1>
+        <p>适用于电商商品投放，实时计算保本投产、推广空间和预计盈亏。</p>
+      </div>
+      <div class="badge">本地版 · 无需联网</div>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h2>成本与售价</h2>
+        <div class="form-grid">
+          <div class="field">
+            <label>货价</label>
+            <div class="input-wrap">
+              <span class="prefix">¥</span>
+              <input id="cost" type="number" step="0.01" min="0" value="4.38">
+            </div>
+          </div>
+
+          <div class="field">
+            <label>售价</label>
+            <div class="input-wrap">
+              <span class="prefix">¥</span>
+              <input id="price" type="number" step="0.01" min="0" value="11.30">
+            </div>
+          </div>
+
+          <div class="field">
+            <label>快递费</label>
+            <div class="input-wrap">
+              <span class="prefix">¥</span>
+              <input id="shipping" type="number" step="0.01" min="0" value="3.50">
+            </div>
+          </div>
+
+          <div class="field">
+            <label>税点</label>
+            <div class="input-wrap">
+              <input id="taxRate" type="number" step="0.01" min="0" value="0">
+              <span class="suffix">%</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>平台扣点</label>
+            <div class="input-wrap">
+              <input id="platformRate" type="number" step="0.01" min="0" value="5">
+              <span class="suffix">%</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>预估推广费 / 单</label>
+            <div class="input-wrap">
+              <span class="prefix">¥</span>
+              <input id="adCost" type="number" step="0.01" min="0" value="2.00">
+            </div>
+          </div>
+
+          <div class="field full">
+            <div class="hint">说明：ROI = 成交金额 ÷ 推广费。税点、平台扣点均按售价比例计算。</div>
+          </div>
+        </div>
+
+        <div class="formula">
+          <h3>计算逻辑</h3>
+          <p>保本推广费 = 售价 - 货价 - 快递费 - 税费 - 平台扣费</p>
+          <p>保本 ROI = 售价 ÷ 保本推广费</p>
+          <p>当前单笔利润 = 保本推广费 - 预估推广费</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>计算结果</h2>
+
+        <div class="result-main">
+          <div class="label">保本 ROI</div>
+          <div class="value" id="breakEvenRoi">--</div>
+          <div class="desc" id="roiDesc">实际 ROI 高于此数值，商品才开始进入盈利区间。</div>
+        </div>
+
+        <div class="stats">
+          <div class="stat">
+            <div class="k">保本推广费 / 单</div>
+            <div class="v" id="breakEvenAd">¥0.00</div>
+          </div>
+          <div class="stat">
+            <div class="k">当前预估 ROI</div>
+            <div class="v" id="currentRoi">--</div>
+          </div>
+          <div class="stat">
+            <div class="k">单笔预计盈亏</div>
+            <div class="v" id="profitPerOrder">¥0.00</div>
+          </div>
+          <div class="stat">
+            <div class="k">100 单预计盈亏</div>
+            <div class="v" id="profit100">¥0.00</div>
+          </div>
+          <div class="stat">
+            <div class="k">税费</div>
+            <div class="v" id="taxFee">¥0.00</div>
+          </div>
+          <div class="stat">
+            <div class="k">平台扣费</div>
+            <div class="v" id="platformFee">¥0.00</div>
+          </div>
+        </div>
+
+        <div id="status" class="status neutral">请输入有效数据</div>
+      </section>
+    </div>
+
+    <div class="footer">数据仅保存在当前浏览器页面中，不会上传。</div>
+  </div>
+
+  <script>
+    const ids = ["cost","price","shipping","taxRate","platformRate","adCost"];
+    ids.forEach(id => document.getElementById(id).addEventListener("input", calculate));
+
+    function num(id) {
+      const v = parseFloat(document.getElementById(id).value);
+      return Number.isFinite(v) ? v : 0;
+    }
+
+    function money(v) {
+      const sign = v < 0 ? "-¥" : "¥";
+      return sign + Math.abs(v).toFixed(2);
+    }
+
+    function calculate() {
+      const cost = num("cost");
+      const price = num("price");
+      const shipping = num("shipping");
+      const taxRate = num("taxRate") / 100;
+      const platformRate = num("platformRate") / 100;
+      const adCost = num("adCost");
+
+      const taxFee = price * taxRate;
+      const platformFee = price * platformRate;
+      const breakEvenAd = price - cost - shipping - taxFee - platformFee;
+      const breakEvenRoi = breakEvenAd > 0 ? price / breakEvenAd : Infinity;
+      const currentRoi = adCost > 0 ? price / adCost : Infinity;
+      const profitPerOrder = breakEvenAd - adCost;
+      const profit100 = profitPerOrder * 100;
+
+      document.getElementById("taxFee").textContent = money(taxFee);
+      document.getElementById("platformFee").textContent = money(platformFee);
+      document.getElementById("breakEvenAd").textContent = money(breakEvenAd);
+      document.getElementById("profitPerOrder").textContent = money(profitPerOrder);
+      document.getElementById("profit100").textContent = money(profit100);
+
+      document.getElementById("breakEvenRoi").textContent =
+        Number.isFinite(breakEvenRoi) ? breakEvenRoi.toFixed(2) : "无法保本";
+
+      document.getElementById("currentRoi").textContent =
+        Number.isFinite(currentRoi) ? currentRoi.toFixed(2) : "∞";
+
+      const status = document.getElementById("status");
+      status.className = "status";
+
+      if (price <= 0) {
+        status.classList.add("neutral");
+        status.textContent = "请填写有效售价";
+      } else if (breakEvenAd <= 0) {
+        status.classList.add("bad");
+        status.textContent = "当前商品基础成本已高于或等于售价，不投广告也无法保本。";
+      } else if (profitPerOrder > 0.005) {
+        status.classList.add("good");
+        status.textContent = `预计每单盈利 ${money(profitPerOrder)}，当前推广费低于保本推广费。`;
+      } else if (profitPerOrder < -0.005) {
+        status.classList.add("bad");
+        status.textContent = `预计每单亏损 ${money(Math.abs(profitPerOrder))}，需要降低推广成本或提高售价。`;
+      } else {
+        status.classList.add("neutral");
+        status.textContent = "当前基本处于保本状态。";
+      }
+    }
+
+    calculate();
+  </script>
+</body>
+</html>
