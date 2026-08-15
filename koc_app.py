@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import os
+import tempfile
+import uuid
+from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
@@ -27,6 +31,16 @@ REQUIRED_COLUMNS = [
     "素材",
     "备注",
 ]
+SUPPORTED_IMPORT_EXTENSIONS = {".xlsx", ".xls"}
+MAX_IMPORT_BYTES = 25 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class KocImportResult:
+    rows: int
+    status_count: int
+    channel_count: int
+    saved_name: str
 
 
 def get_koc_path() -> Path:
@@ -34,10 +48,7 @@ def get_koc_path() -> Path:
     return Path(os.environ.get("TMALL_KOC_FILE", data_dir / "koc_management.xlsx"))
 
 
-@st.cache_data(show_spinner="正在读取达人管理表...")
-def load_koc_data(path_text: str, mtime_ns: int, size: int) -> pd.DataFrame:
-    del mtime_ns, size
-    df = pd.read_excel(path_text, sheet_name=0)
+def normalize_koc_data(df: pd.DataFrame) -> pd.DataFrame:
     for column in REQUIRED_COLUMNS:
         if column not in df.columns:
             df[column] = pd.NA
@@ -52,6 +63,76 @@ def load_koc_data(path_text: str, mtime_ns: int, size: int) -> pd.DataFrame:
     df["结算价"] = pd.to_numeric(df["结算价"], errors="coerce").fillna(0)
     df["发布时间（最早）"] = pd.to_datetime(df["发布时间（最早）"], errors="coerce")
     return df
+
+
+def validate_koc_import(original_name: str, content: bytes) -> tuple[pd.DataFrame, str]:
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in SUPPORTED_IMPORT_EXTENSIONS:
+        raise ValueError("只支持 .xlsx / .xls 达人表")
+    if not content:
+        raise ValueError("上传文件为空")
+    if len(content) > MAX_IMPORT_BYTES:
+        raise ValueError("文件超过 25MB")
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary_file:
+        temporary_file.write(content)
+        staged_path = Path(temporary_file.name)
+    try:
+        raw = pd.read_excel(staged_path, sheet_name=0)
+    finally:
+        staged_path.unlink(missing_ok=True)
+
+    missing = [column for column in ("达人名", "渠道") if column not in raw.columns]
+    if missing:
+        raise ValueError(f"缺少必要字段：{', '.join(missing)}")
+
+    normalized = normalize_koc_data(raw)
+    if normalized["达人名"].eq("").all():
+        raise ValueError("达人名为空，无法导入")
+    return normalized, suffix
+
+
+def install_koc_workbook(original_name: str, content: bytes, target_path: Path) -> KocImportResult:
+    normalized, suffix = validate_koc_import(original_name, content)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    incoming_dir = target_path.parent / ".incoming"
+    incoming_dir.mkdir(exist_ok=True)
+    archive_dir = target_path.parent / "archive" / "达人管理"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.NamedTemporaryFile(
+        mode="wb",
+        dir=incoming_dir,
+        prefix="koc-management-",
+        suffix=suffix,
+        delete=False,
+    ) as temporary_file:
+        temporary_file.write(content)
+        staged_path = Path(temporary_file.name)
+
+    try:
+        if target_path.exists():
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            archive_name = f"{timestamp}-{uuid.uuid4().hex[:8]}-{target_path.name}"
+            os.replace(target_path, archive_dir / archive_name)
+        os.replace(staged_path, target_path)
+        if os.name != "nt":
+            target_path.chmod(0o640)
+    finally:
+        staged_path.unlink(missing_ok=True)
+
+    return KocImportResult(
+        rows=len(normalized),
+        status_count=normalized["联系状态"].nunique(),
+        channel_count=normalized["渠道"].nunique(),
+        saved_name=target_path.name,
+    )
+
+
+@st.cache_data(show_spinner="正在读取达人管理表...")
+def load_koc_data(path_text: str, mtime_ns: int, size: int) -> pd.DataFrame:
+    del mtime_ns, size
+    return normalize_koc_data(pd.read_excel(path_text, sheet_name=0))
 
 
 def option_values(series: pd.Series) -> list[str]:
@@ -92,8 +173,35 @@ with st.sidebar:
 
 st.title("达人管理")
 
+with st.expander("导入达人表", expanded=not koc_path.exists()):
+    st.caption("上传 Excel 后会先校验字段，成功后替换当前达人表；旧表会自动归档。")
+    uploaded_koc = st.file_uploader(
+        "选择达人 Excel",
+        type=["xlsx", "xls"],
+        key="koc_import_file",
+    )
+    if st.button("导入并替换达人表", type="primary", width="stretch"):
+        if uploaded_koc is None:
+            st.warning("请先选择达人 Excel 文件。")
+        else:
+            try:
+                result = install_koc_workbook(
+                    uploaded_koc.name,
+                    uploaded_koc.getvalue(),
+                    koc_path,
+                )
+            except Exception as exc:
+                st.error(f"导入失败：{exc}")
+            else:
+                st.cache_data.clear()
+                st.success(
+                    f"导入成功：{result.rows} 位达人，"
+                    f"{result.status_count} 种联系状态，{result.channel_count} 个渠道。"
+                )
+                st.rerun()
+
 if not koc_path.exists():
-    st.warning(f"尚未找到达人管理表：{koc_path}")
+    st.warning("尚未导入达人表，请先上传 Excel。")
     st.stop()
 
 df = load_koc_data(str(koc_path), koc_path.stat().st_mtime_ns, koc_path.stat().st_size)
