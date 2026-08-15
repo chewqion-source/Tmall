@@ -248,7 +248,9 @@ with chart_right:
 
 st.subheader("达人明细")
 table = filtered.copy()
-table["发布时间（最早）"] = table["发布时间（最早）"].dt.strftime("%Y-%m-%d").fillna("")
+table["发布时间（最早）"] = (
+    pd.to_datetime(table["发布时间（最早）"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+)
 st.dataframe(
     table,
     width="stretch",
