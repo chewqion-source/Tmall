@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -51,12 +50,31 @@ def color_profit(value: object) -> str:
     return "color: #475569"
 
 
+TREND_RANGE_OPTIONS = ("今日", "昨日", "3天", "7天", "15天", "近一个月", "近半年")
+
+
+def filter_trend_range(data: pd.DataFrame, range_label: str) -> pd.DataFrame:
+    latest_date = data["date"].max()
+    if range_label == "今日":
+        filtered = data[data["date"] == latest_date]
+    elif range_label == "昨日":
+        filtered = data[data["date"] == latest_date - pd.Timedelta(days=1)]
+    else:
+        days_by_label = {
+            "3天": 3,
+            "7天": 7,
+            "15天": 15,
+            "近一个月": 30,
+            "近半年": 183,
+        }
+        days = days_by_label[range_label]
+        start_date = latest_date - pd.Timedelta(days=days - 1)
+        filtered = data[data["date"] >= start_date]
+    return filtered if not filtered.empty else data.tail(1)
+
+
 with st.sidebar:
     st.header("店铺与数据")
-    with st.expander("四家店铺的数据源", expanded=False):
-        st.caption("每次刷新都会重新扫描桌面，并选取各店铺最新修改的匹配文件：")
-        for store, patterns in STORE_FILE_PATTERNS.items():
-            st.code(f"{store}：{patterns[0]}.xls / .xlsx / .xlsm", language=None)
     if st.button("重新读取四家店铺", width="stretch"):
         st.cache_data.clear()
     st.link_button(
@@ -93,16 +111,7 @@ with st.sidebar:
     summary = build_summary(store_daily, complete)
     products = summary["product_id"].tolist()
     selected_product = st.selectbox("商品 ID", products, index=0)
-
-    for store, path in sources.items():
-        updated = datetime.fromtimestamp(path.stat().st_mtime).strftime("%m-%d %H:%M")
-        cache_status = all_daily.loc[all_daily["store"] == store, "cache_status"].iloc[0]
-        st.caption(f"✅ {store}：{path.name}（{updated}，{cache_status}）")
-    if sample:
-        st.success(
-            f"易丽洁样例校验通过：销量 {sample['sales_qty']:.0f}，"
-            f"订单量 {sample['order_count']:.0f}，盈亏 {sample['profit']:.3f}"
-        )
+    trend_range = st.selectbox("趋势日期范围", TREND_RANGE_OPTIONS, index=5)
 
 st.title("天猫四店日报分析")
 st.info(f"当前查看：**{selected_store}**　｜　数据截至 {store_daily['date'].max():%Y-%m-%d}")
@@ -115,6 +124,7 @@ if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
     )
 
 selected = complete[complete["product_id"] == selected_product].copy().sort_values("date")
+trend_selected = filter_trend_range(selected, trend_range)
 selected_summary = summary[summary["product_id"] == selected_product].iloc[0]
 latest = selected.iloc[-1]
 
@@ -139,12 +149,12 @@ metric_cols[3].metric(
 
 left, right = st.columns(2)
 with left:
-    st.subheader("销量 / 订单量趋势")
+    st.subheader(f"销量 / 订单量趋势（{trend_range}）")
     sales_fig = make_subplots(specs=[[{"secondary_y": True}]])
     sales_fig.add_trace(
         go.Scatter(
-            x=selected["date"],
-            y=selected["sales_qty"],
+            x=trend_selected["date"],
+            y=trend_selected["sales_qty"],
             name="销量",
             mode="lines+markers",
             line=dict(color="#2563eb", width=3),
@@ -155,8 +165,8 @@ with left:
     )
     sales_fig.add_trace(
         go.Scatter(
-            x=selected["date"],
-            y=selected["order_count"],
+            x=trend_selected["date"],
+            y=trend_selected["order_count"],
             name="订单量",
             mode="lines+markers",
             line=dict(color="#f59e0b", width=3, dash="dot"),
@@ -176,14 +186,14 @@ with left:
     st.plotly_chart(sales_fig, width="stretch")
 
 with right:
-    st.subheader("盈亏趋势")
-    profit_colors = ["#16a34a" if value >= 0 else "#dc2626" for value in selected["profit"]]
+    st.subheader(f"盈亏趋势（{trend_range}）")
+    profit_colors = ["#16a34a" if value >= 0 else "#dc2626" for value in trend_selected["profit"]]
     profit_fig = go.Figure(
         go.Bar(
-            x=selected["date"],
-            y=selected["profit"],
+            x=trend_selected["date"],
+            y=trend_selected["profit"],
             marker_color=profit_colors,
-            text=[f"{value:+.2f}" for value in selected["profit"]],
+            text=[f"{value:+.2f}" for value in trend_selected["profit"]],
             textposition="outside",
             hovertemplate="日期 %{x|%m-%d}<br>盈亏 ¥%{y:,.2f}<extra></extra>",
         )
