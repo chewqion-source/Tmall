@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import mimetypes
 import os
@@ -18,6 +19,9 @@ st.set_page_config(page_title="AI 生图", page_icon="🎨", layout="wide")
 
 MODEL_NAME = "gpt-image-2"
 ASPECT_RATIOS = ("1024x1024", "1024x1536", "1536x1024")
+REFERENCE_IMAGE_TYPES = ("jpg", "jpeg", "png", "webp")
+REFERENCE_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 def get_data_dir() -> Path:
@@ -123,6 +127,20 @@ def image_download_name(content_type: str) -> str:
     return f"grsai-{timestamp}{extension}"
 
 
+def reference_image_data_url(uploaded_image: Any) -> str:
+    image_bytes = uploaded_image.getvalue()
+    if not image_bytes:
+        raise RuntimeError("上传的参考图片内容为空")
+    if len(image_bytes) > MAX_REFERENCE_IMAGE_BYTES:
+        raise RuntimeError("参考图片不能超过 10 MB")
+
+    content_type = str(getattr(uploaded_image, "type", "")).lower()
+    if content_type not in REFERENCE_IMAGE_MIME_TYPES:
+        raise RuntimeError("参考图片仅支持 JPG、PNG 或 WEBP 格式")
+    encoded_image = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{content_type};base64,{encoded_image}"
+
+
 def extract_image_url(response: dict[str, Any]) -> str | None:
     results = response.get("results")
     if isinstance(results, list) and results:
@@ -149,11 +167,11 @@ def result_id(response: dict[str, Any]) -> str | None:
     return None
 
 
-def generate_image(prompt: str, aspect_ratio: str) -> str:
+def generate_image(prompt: str, aspect_ratio: str, reference_images: list[str] | None = None) -> str:
     payload = {
         "model": MODEL_NAME,
         "prompt": prompt,
-        "images": [],
+        "images": reference_images or [],
         "aspectRatio": aspect_ratio,
         "replyType": "json",
     }
@@ -239,10 +257,17 @@ if not api_key():
     st.warning("服务器尚未配置 GRS AI API Key。配置后即可生成图片。")
 
 with st.form("ai_image_form"):
+    uploaded_reference = st.file_uploader(
+        "参考图片（可选）",
+        type=REFERENCE_IMAGE_TYPES,
+        help="上传后将根据原图和提示词进行修改；不上传则直接根据提示词生成。最大 10 MB。",
+    )
+    if uploaded_reference is not None:
+        st.image(uploaded_reference, caption="参考图片预览", width=320)
     prompt = st.text_area(
         "生图提示词",
         height=180,
-        placeholder="例如：天猫电商商品主图，干净白底，高级质感，突出产品卖点...",
+        placeholder="例如：保留原商品外观，替换为干净白底，增强质感并突出产品卖点...",
     )
     aspect_ratio = st.selectbox("图片尺寸", ASPECT_RATIOS, index=0)
     submitted = st.form_submit_button("生成图片", type="primary", width="stretch")
@@ -253,7 +278,10 @@ if submitted:
     else:
         try:
             with st.spinner("正在生成图片，可能需要几十秒..."):
-                image_url = generate_image(prompt.strip(), aspect_ratio)
+                reference_images = []
+                if uploaded_reference is not None:
+                    reference_images.append(reference_image_data_url(uploaded_reference))
+                image_url = generate_image(prompt.strip(), aspect_ratio, reference_images)
                 save_history(prompt.strip(), aspect_ratio, image_url)
         except Exception as exc:
             st.error(f"生成失败：{exc}")
