@@ -17,6 +17,7 @@ from data_loader import (
     load_store_daily,
     validate_known_sample,
 )
+from product_images import fetch_product_image, product_image_url
 
 
 st.set_page_config(page_title="天猫四店日报分析", page_icon="📊", layout="wide")
@@ -133,7 +134,23 @@ trend_selected = filter_trend_range(selected, trend_range)
 selected_summary = summary[summary["product_id"] == selected_product].iloc[0]
 latest = selected.iloc[-1]
 
-metric_cols = st.columns(4)
+image_col, metric_area = st.columns([1, 4])
+with image_col:
+    image_url = product_image_url(selected_product)
+    if image_url:
+        st.image(image_url, caption=f"商品 {selected_product}", width=160)
+    else:
+        st.caption("暂无商品图")
+        if st.button("抓取当前商品图", width="stretch"):
+            try:
+                fetch_product_image(selected_product)
+            except Exception as exc:
+                st.error(f"抓取失败：{exc}")
+            else:
+                st.rerun()
+
+with metric_area:
+    metric_cols = st.columns(4)
 metric_cols[0].metric("累计销量", f"{selected_summary['total_sales']:,.0f}")
 metric_cols[1].metric(
     "累计盈亏",
@@ -151,6 +168,22 @@ metric_cols[3].metric(
     f"¥{latest['profit']:,.2f}",
     delta=signed(latest["profit_change"]) if pd.notna(latest["profit_change"]) else None,
 )
+
+with st.expander("商品缩略图批量抓取", expanded=False):
+    st.caption("自动按商品 ID 从天猫/淘宝公开详情页抓取缩略图，并缓存到服务器。抓取失败不会影响看板数据。")
+    max_fetch = st.number_input("本次最多抓取缺失商品数", min_value=1, max_value=100, value=20, step=1)
+    if st.button("抓取当前店铺缺失商品图", width="stretch"):
+        missing_products = [product for product in products if not product_image_url(product)]
+        results = []
+        for product in missing_products[: int(max_fetch)]:
+            try:
+                fetch_product_image(product)
+                results.append((product, "成功"))
+            except Exception as exc:
+                results.append((product, f"失败：{exc}"))
+        st.dataframe(pd.DataFrame(results, columns=["商品ID", "结果"]), width="stretch", hide_index=True)
+        if any(status == "成功" for _product, status in results):
+            st.rerun()
 
 left, right = st.columns(2)
 with left:
