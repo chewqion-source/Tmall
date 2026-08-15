@@ -261,7 +261,6 @@ styled_changes = changes.style.map(color_profit, subset=["盈亏", "盈亏日增
 st.dataframe(styled_changes, width="stretch", hide_index=True)
 
 st.subheader(f"{selected_store}商品汇总表")
-st.caption("绿色为盈利，红色为亏损；可点击列标题排序。")
 summary_view = summary.rename(
     columns={
         "product_id": "商品ID",
