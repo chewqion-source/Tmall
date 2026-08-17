@@ -54,6 +54,15 @@ def empty_koc_data() -> pd.DataFrame:
     return pd.DataFrame(columns=REQUIRED_COLUMNS)
 
 
+def normalize_homepage_url(value: object) -> str:
+    text = "" if pd.isna(value) else str(value).strip()
+    if not text:
+        return ""
+    if "://" in text or text.startswith(("mailto:", "tel:")):
+        return text
+    return f"https://{text}"
+
+
 def normalize_koc_data(df: pd.DataFrame) -> pd.DataFrame:
     for column in REQUIRED_COLUMNS:
         if column not in df.columns:
@@ -66,6 +75,7 @@ def normalize_koc_data(df: pd.DataFrame) -> pd.DataFrame:
     df["联系状态"] = df["联系状态"].replace("", "未标记")
     df["渠道"] = df["渠道"].replace("", "未标记")
     df["推广方式"] = df["推广方式"].replace("", "未标记")
+    df["账号主页"] = df["账号主页"].map(normalize_homepage_url)
     df["报价"] = pd.to_numeric(df["报价"], errors="coerce")
     df["返点"] = pd.to_numeric(df["返点"], errors="coerce")
     df["结算价"] = pd.to_numeric(df["结算价"], errors="coerce").fillna(0)
@@ -299,7 +309,7 @@ edited_table = st.data_editor(
             "联系状态",
             options=["未标记", "待联系", "已联系", "已合作", "已完结", "已拒绝"],
         ),
-        "账号主页": st.column_config.TextColumn("账号主页"),
+        "账号主页": st.column_config.LinkColumn("账号主页", display_text="跳转主页"),
         "发布链接": st.column_config.TextColumn("发布链接"),
         "报价": st.column_config.NumberColumn("报价", format="¥%.2f", min_value=0),
         "返点": st.column_config.NumberColumn("返点", format="%.2f", min_value=0),
