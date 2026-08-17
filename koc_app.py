@@ -136,6 +136,27 @@ def search_rows(df: pd.DataFrame, keyword: str) -> pd.DataFrame:
     return df[combined.str.contains(keyword, regex=False)]
 
 
+def editor_snapshot(df: pd.DataFrame) -> pd.DataFrame:
+    snapshot = df[["_row_id", *REQUIRED_COLUMNS]].copy()
+    for column in TEXT_COLUMNS:
+        snapshot[column] = snapshot[column].fillna("").astype(str).str.strip()
+    for column in ["报价", "返点", "结算价"]:
+        snapshot[column] = pd.to_numeric(snapshot[column], errors="coerce")
+    snapshot["发布时间（最早）"] = (
+        pd.to_datetime(snapshot["发布时间（最早）"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+    )
+    return snapshot.reset_index(drop=True)
+
+
+def apply_editor_changes(current: pd.DataFrame, edited: pd.DataFrame) -> pd.DataFrame:
+    updated = current.copy()
+    for _, edited_row in edited.iterrows():
+        row_id = int(edited_row["_row_id"])
+        for column in REQUIRED_COLUMNS:
+            updated.at[row_id, column] = edited_row[column]
+    return updated
+
+
 koc_path = get_koc_path()
 
 with st.sidebar:
@@ -265,6 +286,7 @@ with chart_right:
 st.subheader("达人明细")
 table = filtered.copy()
 table["_row_id"] = table.index
+original_snapshot = editor_snapshot(table)
 edited_table = st.data_editor(
     table[["_row_id", *REQUIRED_COLUMNS]],
     width="stretch",
@@ -286,27 +308,14 @@ edited_table = st.data_editor(
     },
 )
 
-save_col, _ = st.columns([1, 5])
-with save_col:
-    save_table_changes = st.button(
-        "保存表格修改",
-        type="primary",
-        width="stretch",
-        disabled=edited_table.empty,
-    )
-
-if save_table_changes:
-    updated_df = df.copy()
-    for _, edited_row in edited_table.iterrows():
-        row_id = int(edited_row["_row_id"])
-        for column in REQUIRED_COLUMNS:
-            updated_df.at[row_id, column] = edited_row[column]
-
+edited_snapshot = editor_snapshot(edited_table)
+if not original_snapshot.equals(edited_snapshot):
+    updated_df = apply_editor_changes(df, edited_table)
     try:
         save_koc_data(updated_df, koc_path)
     except Exception as exc:
         st.error(f"保存失败：{exc}")
     else:
         st.cache_data.clear()
-        st.success("达人表格修改已保存。")
+        st.toast("达人表格修改已自动保存。")
         st.rerun()
