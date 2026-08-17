@@ -31,6 +31,20 @@ REQUIRED_COLUMNS = [
     "备注",
 ]
 
+TEXT_COLUMNS = [
+    "联系状态",
+    "达人名",
+    "ID",
+    "账号主页",
+    "微信号",
+    "邮箱",
+    "渠道",
+    "推广方式",
+    "发布链接",
+    "素材",
+    "备注",
+]
+
 def get_koc_path() -> Path:
     data_dir = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
     return Path(os.environ.get("TMALL_KOC_FILE", data_dir / "koc_management.xlsx"))
@@ -45,11 +59,13 @@ def normalize_koc_data(df: pd.DataFrame) -> pd.DataFrame:
         if column not in df.columns:
             df[column] = pd.NA
     df = df[REQUIRED_COLUMNS].copy()
+    for column in TEXT_COLUMNS:
+        df[column] = df[column].fillna("").astype(str).str.strip()
     df["达人名"] = df["达人名"].fillna("").astype(str).str.strip()
     df["ID"] = df["ID"].fillna("").astype(str).str.strip()
-    df["联系状态"] = df["联系状态"].fillna("未标记").astype(str).str.strip()
-    df["渠道"] = df["渠道"].fillna("未标记").astype(str).str.strip()
-    df["推广方式"] = df["推广方式"].fillna("未标记").astype(str).str.strip()
+    df["联系状态"] = df["联系状态"].replace("", "未标记")
+    df["渠道"] = df["渠道"].replace("", "未标记")
+    df["推广方式"] = df["推广方式"].replace("", "未标记")
     df["报价"] = pd.to_numeric(df["报价"], errors="coerce")
     df["返点"] = pd.to_numeric(df["返点"], errors="coerce")
     df["结算价"] = pd.to_numeric(df["结算价"], errors="coerce").fillna(0)
