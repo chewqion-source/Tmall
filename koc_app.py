@@ -248,18 +248,49 @@ with chart_right:
 
 st.subheader("达人明细")
 table = filtered.copy()
-table["发布时间（最早）"] = (
-    pd.to_datetime(table["发布时间（最早）"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
-)
-st.dataframe(
-    table,
+table["_row_id"] = table.index
+edited_table = st.data_editor(
+    table[["_row_id", *REQUIRED_COLUMNS]],
     width="stretch",
     hide_index=True,
+    num_rows="fixed",
+    key="koc_detail_editor",
     column_config={
-        "账号主页": st.column_config.LinkColumn("账号主页"),
-        "发布链接": st.column_config.LinkColumn("发布链接"),
-        "报价": st.column_config.NumberColumn("报价", format="¥%.2f"),
-        "返点": st.column_config.NumberColumn("返点", format="%.2f"),
-        "结算价": st.column_config.NumberColumn("结算价", format="¥%.2f"),
+        "_row_id": None,
+        "联系状态": st.column_config.SelectboxColumn(
+            "联系状态",
+            options=["未标记", "待联系", "已联系", "已合作", "已完结", "已拒绝"],
+        ),
+        "账号主页": st.column_config.TextColumn("账号主页"),
+        "发布链接": st.column_config.TextColumn("发布链接"),
+        "报价": st.column_config.NumberColumn("报价", format="¥%.2f", min_value=0),
+        "返点": st.column_config.NumberColumn("返点", format="%.2f", min_value=0),
+        "结算价": st.column_config.NumberColumn("结算价", format="¥%.2f", min_value=0),
+        "发布时间（最早）": st.column_config.DateColumn("发布时间（最早）", format="YYYY-MM-DD"),
     },
 )
+
+save_col, _ = st.columns([1, 5])
+with save_col:
+    save_table_changes = st.button(
+        "保存表格修改",
+        type="primary",
+        width="stretch",
+        disabled=edited_table.empty,
+    )
+
+if save_table_changes:
+    updated_df = df.copy()
+    for _, edited_row in edited_table.iterrows():
+        row_id = int(edited_row["_row_id"])
+        for column in REQUIRED_COLUMNS:
+            updated_df.at[row_id, column] = edited_row[column]
+
+    try:
+        save_koc_data(updated_df, koc_path)
+    except Exception as exc:
+        st.error(f"保存失败：{exc}")
+    else:
+        st.cache_data.clear()
+        st.success("达人表格修改已保存。")
+        st.rerun()
