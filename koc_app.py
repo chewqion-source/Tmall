@@ -63,6 +63,13 @@ def normalize_homepage_url(value: object) -> str:
     return f"https://{text}"
 
 
+def calculate_settlement(price: pd.Series, rebate: pd.Series) -> pd.Series:
+    return (
+        pd.to_numeric(price, errors="coerce").fillna(0)
+        * pd.to_numeric(rebate, errors="coerce").fillna(0)
+    )
+
+
 def normalize_koc_data(df: pd.DataFrame) -> pd.DataFrame:
     for column in REQUIRED_COLUMNS:
         if column not in df.columns:
@@ -78,7 +85,7 @@ def normalize_koc_data(df: pd.DataFrame) -> pd.DataFrame:
     df["账号主页"] = df["账号主页"].map(normalize_homepage_url)
     df["报价"] = pd.to_numeric(df["报价"], errors="coerce")
     df["返点"] = pd.to_numeric(df["返点"], errors="coerce")
-    df["结算价"] = pd.to_numeric(df["结算价"], errors="coerce").fillna(0)
+    df["结算价"] = calculate_settlement(df["报价"], df["返点"])
     df["发布时间（最早）"] = pd.to_datetime(df["发布时间（最早）"], errors="coerce")
     return df
 
@@ -163,7 +170,13 @@ def apply_editor_changes(current: pd.DataFrame, edited: pd.DataFrame) -> pd.Data
     for _, edited_row in edited.iterrows():
         row_id = int(edited_row["_row_id"])
         for column in REQUIRED_COLUMNS:
+            if column == "结算价":
+                continue
             updated.at[row_id, column] = edited_row[column]
+        updated.at[row_id, "结算价"] = calculate_settlement(
+            pd.Series([updated.at[row_id, "报价"]]),
+            pd.Series([updated.at[row_id, "返点"]]),
+        ).iat[0]
     return updated
 
 
@@ -209,7 +222,7 @@ with st.expander("新增达人", expanded=not koc_path.exists()):
         with col3:
             new_price = st.number_input("报价", min_value=0.0, step=1.0)
             new_rebate = st.number_input("返点", min_value=0.0, step=0.01)
-            new_settlement = st.number_input("结算价", min_value=0.0, step=1.0)
+            st.metric("结算价", f"¥{new_price * new_rebate:,.2f}")
             new_material = st.text_input("素材")
             new_note = st.text_area("备注", height=92)
 
@@ -228,7 +241,7 @@ with st.expander("新增达人", expanded=not koc_path.exists()):
             "推广方式": new_method,
             "报价": new_price,
             "返点": new_rebate,
-            "结算价": new_settlement,
+            "结算价": new_price * new_rebate,
             "发布时间（最早）": publish_date,
             "发布链接": new_post_link,
             "素材": new_material,
@@ -313,7 +326,7 @@ edited_table = st.data_editor(
         "发布链接": st.column_config.TextColumn("发布链接"),
         "报价": st.column_config.NumberColumn("报价", format="¥%.2f", min_value=0),
         "返点": st.column_config.NumberColumn("返点", format="%.2f", min_value=0),
-        "结算价": st.column_config.NumberColumn("结算价", format="¥%.2f", min_value=0),
+        "结算价": st.column_config.NumberColumn("结算价", format="¥%.2f", disabled=True),
         "发布时间（最早）": st.column_config.DateColumn("发布时间（最早）", format="YYYY-MM-DD"),
     },
 )
