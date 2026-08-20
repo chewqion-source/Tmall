@@ -162,99 +162,92 @@ def _format_money(value: float) -> str:
     return f"¥{value:,.2f}"
 
 
-def _progress_ratio(value: float, max_abs: float) -> float:
-    if max_abs <= 0:
-        return 0.0
-    return min(max(abs(float(value)) / max_abs, 0.04), 1.0)
-
-
-def _render_rank_bars(
+def _render_product_rank_chart(
     data: pd.DataFrame,
     value_col: str,
     title: str,
     empty_text: str,
+    color: str,
 ) -> None:
     if data.empty:
         st.caption(empty_text)
         return
 
-    compact = data.reset_index(drop=True).copy()
-    compact.insert(0, "排名", compact.index + 1)
-    compact["商品ID"] = compact["商品ID"].map(_product_axis_label)
-    compact = compact[["排名", "商品ID", "销量", "订单量", value_col]]
-    st.caption(title)
-    st.dataframe(
-        compact,
-        hide_index=True,
-        width="stretch",
-        height=36 + 35 * len(compact),
-        column_config={
-            "排名": st.column_config.NumberColumn("排名", format="%d"),
-            "销量": st.column_config.NumberColumn("销量", format="%d"),
-            "订单量": st.column_config.NumberColumn("订单", format="%d"),
-            value_col: st.column_config.NumberColumn("实时盈亏", format="¥%.2f"),
-        },
+    chart_data = data.iloc[::-1].copy()
+    chart_data["短商品ID"] = chart_data["商品ID"].map(_product_axis_label)
+    chart_data["标签"] = (
+        chart_data["店铺"].astype(str)
+        + " #"
+        + chart_data["排名"].astype(str)
+        + "  "
+        + chart_data["短商品ID"]
     )
-
-
-def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
-    latest_date = all_daily["date"].max()
-    latest_rows = all_daily[all_daily["date"] == latest_date]
-    latest_overview = (
-        latest_rows.groupby("store", as_index=False)
-        .agg(
-            销量=("sales_qty", "sum"),
-            订单量=("order_count", "sum"),
-            实时盈亏=("profit", "sum"),
-            商品数=("product_id", "nunique"),
-        )
-        .rename(columns={"store": "店铺"})
-        .sort_values("实时盈亏", ascending=False, ignore_index=True)
-    )
-
-    st.subheader(f"{latest_date:%Y-%m-%d} 店铺实时盈亏汇总")
-    metric_cols = st.columns(4)
-    metric_cols[0].metric("店铺数", f"{len(latest_rows['store'].unique()):,.0f}")
-    metric_cols[1].metric("总销量", f"{latest_overview['销量'].sum():,.0f}")
-    metric_cols[2].metric("总订单量", f"{latest_overview['订单量'].sum():,.0f}")
-    metric_cols[3].metric("实时盈亏", f"¥{latest_overview['实时盈亏'].sum():,.2f}")
-
-    max_profit = max(abs(float(value)) for value in latest_overview["实时盈亏"]) or 1
-    compact_overview = latest_overview.copy()
-    compact_overview.insert(0, "排名", compact_overview.index + 1)
-    compact_overview["盈亏占比"] = compact_overview["实时盈亏"].map(lambda value: _progress_ratio(value, max_profit))
-    st.dataframe(
-        compact_overview[["排名", "店铺", "销量", "订单量", "商品数", "实时盈亏", "盈亏占比"]],
-        hide_index=True,
-        width="stretch",
-        height=36 + 35 * len(compact_overview),
-        column_config={
-            "排名": st.column_config.NumberColumn("排名", format="%d"),
-            "销量": st.column_config.NumberColumn("销量", format="%d"),
-            "订单量": st.column_config.NumberColumn("订单", format="%d"),
-            "商品数": st.column_config.NumberColumn("商品", format="%d"),
-            "实时盈亏": st.column_config.NumberColumn("实时盈亏", format="¥%.2f"),
-            "盈亏占比": st.column_config.ProgressColumn("强度", min_value=0, max_value=1, format="%.0f%%"),
-        },
-    )
-
-
-def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
-    latest_date = all_daily["date"].max()
-    latest_rows = all_daily[all_daily["date"] == latest_date].copy()
-    if latest_rows.empty:
-        return
-
-    product_daily = (
-        latest_rows.groupby(["store", "product_id"], as_index=False)
-        .agg(
-            销量=("sales_qty", "sum"),
-            订单量=("order_count", "sum"),
-            实时盈亏=("profit", "sum"),
+    fig = go.Figure(
+        go.Bar(
+            x=chart_data[value_col],
+            y=chart_data["标签"],
+            orientation="h",
+            marker_color=color,
+            text=[_format_money(float(value)) for value in chart_data[value_col]],
+            textposition="outside",
+            customdata=chart_data[["商品ID", "销量", "订单量"]],
+            hovertemplate=(
+                "商品 %{customdata[0]}<br>"
+                "销量 %{customdata[1]:,.0f}<br>"
+                "订单 %{customdata[2]:,.0f}<br>"
+                "实时盈亏 %{x:,.2f}<extra></extra>"
+            ),
         )
     )
+    fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14)),
+        height=min(450, 96 + 28 * len(chart_data)),
+        margin=dict(l=6, r=36, t=34, b=8),
+        xaxis_title="",
+        yaxis_title="",
+        showlegend=False,
+        font=dict(size=11),
+    )
+    fig.update_xaxes(showgrid=True, gridcolor="#e5e7eb", zeroline=False)
+    fig.update_yaxes(tickfont=dict(size=10))
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
-    st.subheader(f"{latest_date:%Y-%m-%d} 店铺商品盈利 / 亏损 TOP5")
+
+def _render_store_profit_chart(latest_overview: pd.DataFrame) -> None:
+    chart_data = latest_overview.sort_values("实时盈亏", ascending=True).copy()
+    colors = ["#16a34a" if value >= 0 else "#dc2626" for value in chart_data["实时盈亏"]]
+    fig = go.Figure(
+        go.Bar(
+            x=chart_data["实时盈亏"],
+            y=chart_data["店铺"],
+            orientation="h",
+            marker_color=colors,
+            text=[_format_money(float(value)) for value in chart_data["实时盈亏"]],
+            textposition="outside",
+            customdata=chart_data[["销量", "订单量", "商品数"]],
+            hovertemplate=(
+                "销量 %{customdata[0]:,.0f}<br>"
+                "订单 %{customdata[1]:,.0f}<br>"
+                "商品 %{customdata[2]:,.0f}<br>"
+                "实时盈亏 %{x:,.2f}<extra></extra>"
+            ),
+        )
+    )
+    fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
+    fig.update_layout(
+        height=220,
+        margin=dict(l=6, r=42, t=10, b=8),
+        xaxis_title="",
+        yaxis_title="",
+        showlegend=False,
+        font=dict(size=12),
+    )
+    fig.update_xaxes(showgrid=True, gridcolor="#e5e7eb", zeroline=False)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+
+def _build_product_rank_rows(product_daily: pd.DataFrame) -> pd.DataFrame:
     rank_rows: list[pd.DataFrame] = []
     for store in sorted(product_daily["store"].unique()):
         store_products = product_daily[product_daily["store"] == store].copy()
@@ -286,24 +279,77 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
             rank_rows.append(loss_top)
 
     if not rank_rows:
+        return pd.DataFrame(
+            columns=["店铺", "类型", "排名", "商品ID", "销量", "订单量", "实时盈亏"]
+        )
+    return pd.concat(rank_rows, ignore_index=True)[
+        ["店铺", "类型", "排名", "商品ID", "销量", "订单量", "实时盈亏"]
+    ]
+
+
+def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
+    latest_date = all_daily["date"].max()
+    latest_rows = all_daily[all_daily["date"] == latest_date]
+    latest_overview = (
+        latest_rows.groupby("store", as_index=False)
+        .agg(
+            销量=("sales_qty", "sum"),
+            订单量=("order_count", "sum"),
+            实时盈亏=("profit", "sum"),
+            商品数=("product_id", "nunique"),
+        )
+        .rename(columns={"store": "店铺"})
+        .sort_values("实时盈亏", ascending=False, ignore_index=True)
+    )
+
+    st.subheader(f"{latest_date:%Y-%m-%d} 店铺实时盈亏汇总")
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("店铺数", f"{len(latest_rows['store'].unique()):,.0f}")
+    metric_cols[1].metric("总销量", f"{latest_overview['销量'].sum():,.0f}")
+    metric_cols[2].metric("总订单量", f"{latest_overview['订单量'].sum():,.0f}")
+    metric_cols[3].metric("实时盈亏", f"¥{latest_overview['实时盈亏'].sum():,.2f}")
+
+    _render_store_profit_chart(latest_overview)
+
+
+def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
+    latest_date = all_daily["date"].max()
+    latest_rows = all_daily[all_daily["date"] == latest_date].copy()
+    if latest_rows.empty:
+        return
+
+    product_daily = (
+        latest_rows.groupby(["store", "product_id"], as_index=False)
+        .agg(
+            销量=("sales_qty", "sum"),
+            订单量=("order_count", "sum"),
+            实时盈亏=("profit", "sum"),
+        )
+    )
+
+    st.subheader(f"{latest_date:%Y-%m-%d} 店铺商品盈利 / 亏损 TOP5")
+    compact_rank = _build_product_rank_rows(product_daily)
+    if compact_rank.empty:
         st.info("暂无商品盈利 / 亏损数据")
         return
 
-    compact_rank = pd.concat(rank_rows, ignore_index=True)
-    compact_rank["商品ID"] = compact_rank["商品ID"].map(_product_axis_label)
-    compact_rank = compact_rank[["店铺", "类型", "排名", "商品ID", "销量", "订单量", "实时盈亏"]]
-    st.dataframe(
-        compact_rank,
-        hide_index=True,
-        width="stretch",
-        height=min(560, 36 + 35 * len(compact_rank)),
-        column_config={
-            "排名": st.column_config.NumberColumn("排名", format="%d"),
-            "销量": st.column_config.NumberColumn("销量", format="%d"),
-            "订单量": st.column_config.NumberColumn("订单", format="%d"),
-            "实时盈亏": st.column_config.NumberColumn("实时盈亏", format="¥%.2f"),
-        },
-    )
+    profit_col, loss_col = st.columns(2)
+    with profit_col:
+        _render_product_rank_chart(
+            compact_rank[compact_rank["类型"] == "盈利"],
+            "实时盈亏",
+            "盈利产品 TOP5",
+            "暂无盈利产品",
+            "#16a34a",
+        )
+    with loss_col:
+        _render_product_rank_chart(
+            compact_rank[compact_rank["类型"] == "亏损"],
+            "实时盈亏",
+            "亏损产品 TOP5",
+            "暂无亏损产品",
+            "#dc2626",
+        )
 
 
 with st.sidebar:
