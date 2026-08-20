@@ -228,17 +228,17 @@ with st.sidebar:
     st.link_button(
         "返回主看板",
         os.environ.get("TMALL_DASHBOARD_URL", "http://150.158.133.102/"),
-        width="stretch",
+        width="content",
     )
     st.link_button(
-        "保本 ROI 计算器",
+        "投产计算器",
         os.environ.get("TMALL_ROI_URL", "http://150.158.133.102/roi/"),
-        width="stretch",
+        width="content",
     )
     st.link_button(
         "达人管理",
         os.environ.get("TMALL_KOC_URL", "http://150.158.133.102/koc/"),
-        width="stretch",
+        width="content",
     )
 
 title_col, credits_col = st.columns([3, 1], vertical_alignment="center")
@@ -248,10 +248,10 @@ with credits_col:
     try:
         credits = get_account_credits()
     except Exception:
-        st.metric("GRS AI 剩余积分", "暂不可用")
+        st.metric("剩余积分", "暂不可用")
     else:
         credits_text = f"{credits:,.0f}" if float(credits).is_integer() else f"{credits:,.2f}"
-        st.metric("GRS AI 剩余积分", credits_text)
+        st.metric("剩余积分", credits_text)
 
 if not api_key():
     st.warning("服务器尚未配置 GRS AI API Key。配置后即可生成图片。")

@@ -18,7 +18,7 @@ data_dir = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent
 dashboard_url = os.environ.get("TMALL_DASHBOARD_URL", "http://150.158.133.102:8080")
 
 st.title("📤 财务日报上传")
-st.caption("选择对应店铺文件。系统会先校验，成功后才替换服务器正式报表。")
+st.caption("选择对应店铺文件。系统会先校验文件名与店铺是否匹配，成功后才替换服务器正式报表。")
 
 st.info("当前统计范围从 2026-07-01 开始；支持 .xls、.xlsx、.xlsm，单个文件最大 25MB。")
 
@@ -51,7 +51,7 @@ with st.form("workbook_uploads", clear_on_submit=False):
                 f"{store}日报",
                 type=["xls", "xlsx", "xlsm"],
                 key=f"upload_{store}",
-                help="文件名不限，系统会按这里选择的店铺保存。",
+                help="文件名需要能看出对应店铺，系统会做模糊匹配，防止选错店铺。",
             )
     submitted = st.form_submit_button("校验并更新服务器报表", type="primary", width="stretch")
 
@@ -89,6 +89,7 @@ with st.expander("上传规则与数据安全"):
     st.markdown(
         """
 - 可以只上传一家，也可以一次上传多家；未选择的店铺不会改变。
+- 文件名会与选择的店铺做模糊匹配；明显选错店铺时不会替换正式数据。
 - 所有文件会先在临时目录完整解析，任一文件校验失败时不会替换正式数据。
 - 校验通过后使用原子替换；旧报表保存在服务器 `data/archive/店铺/` 目录。
 - 上传内容不会进入 Git 仓库，Git 只保存程序代码。

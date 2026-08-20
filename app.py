@@ -151,22 +151,22 @@ with st.sidebar:
     st.link_button(
         "财务上传报表",
         os.environ.get("TMALL_UPLOAD_URL", "http://150.158.133.102:8080/upload/"),
-        width="stretch",
+        width="content",
     )
     st.link_button(
-        "保本 ROI 计算器",
+        "投产计算器",
         os.environ.get("TMALL_ROI_URL", "http://150.158.133.102/roi/"),
-        width="stretch",
+        width="content",
     )
     st.link_button(
         "达人管理",
         os.environ.get("TMALL_KOC_URL", "http://150.158.133.102/koc/"),
-        width="stretch",
+        width="content",
     )
     st.link_button(
         "AI 生图",
         os.environ.get("TMALL_AI_IMAGE_URL", "http://150.158.133.102/ai-image/"),
-        width="stretch",
+        width="content",
     )
 
 try:
@@ -185,16 +185,26 @@ except Exception as exc:
     st.error(f"读取失败：{exc}")
     st.stop()
 
-with st.sidebar:
+title_col, refresh_col = st.columns([5, 1], vertical_alignment="center")
+with title_col:
+    st.title("天猫四店日报分析")
+with refresh_col:
+    if st.button("刷新数据", type="primary", width="stretch"):
+        st.cache_data.clear()
+        st.rerun()
+
+filter_cols = st.columns([1.2, 1.4, 1])
+with filter_cols[0]:
     selected_store = st.selectbox("当前店铺", list(sources), index=0)
-    store_daily = all_daily[all_daily["store"] == selected_store].copy()
-    complete = complete_daily_series(store_daily)
-    summary = build_summary(store_daily, complete)
-    products = summary["product_id"].tolist()
+store_daily = all_daily[all_daily["store"] == selected_store].copy()
+complete = complete_daily_series(store_daily)
+summary = build_summary(store_daily, complete)
+products = summary["product_id"].tolist()
+with filter_cols[1]:
     selected_product = st.selectbox("商品 ID", products, index=0)
+with filter_cols[2]:
     trend_range = st.selectbox("趋势日期范围", TREND_RANGE_OPTIONS, index=5)
 
-st.title("天猫四店日报分析")
 st.info(f"当前查看：**{selected_store}**　｜　数据截至 {store_daily['date'].max():%Y-%m-%d}")
 
 if selected_product == LEGACY_SUMMARY_PRODUCT_ID:

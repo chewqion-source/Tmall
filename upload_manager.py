@@ -7,6 +7,7 @@ import tempfile
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Mapping
 
@@ -19,6 +20,13 @@ STORE_CANONICAL_BASENAMES = {
     "坐拥宁静": "2026年坐拥宁静日报表",
     "国货严选": "2026年国货严选日报表",
     "咖时光": "2026年咖时光日报表-天猫",
+}
+
+STORE_NAME_ALIASES = {
+    "易丽洁": ["易丽洁", "易丽洁日报", "天猫日报表易丽洁"],
+    "坐拥宁静": ["坐拥宁静", "坐拥宁静日报"],
+    "国货严选": ["国货严选", "国货严选日报"],
+    "咖时光": ["咖时光", "咖时光日报", "咖时光天猫"],
 }
 
 
@@ -48,7 +56,47 @@ def _validate_upload(store: str, original_name: str, content: bytes) -> str:
         raise ValueError(f"{store}：上传文件为空")
     if len(content) > MAX_UPLOAD_BYTES:
         raise ValueError(f"{store}：文件超过 25MB")
+    _validate_store_name_match(store, original_name)
     return suffix
+
+
+def _normalize_filename_text(value: str) -> str:
+    removable = ["2026", "2025", "天猫", "日报表", "日报", "报表", "财务", "数据", "日表"]
+    text = Path(value).stem.lower()
+    for word in removable:
+        text = text.replace(word.lower(), "")
+    return "".join(ch for ch in text if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def _store_match_score(filename_text: str, aliases: list[str]) -> float:
+    if not filename_text:
+        return 0
+    scores = []
+    for alias in aliases:
+        alias_text = _normalize_filename_text(alias)
+        if alias_text and alias_text in filename_text:
+            scores.append(1.0)
+        else:
+            scores.append(SequenceMatcher(None, filename_text, alias_text).ratio())
+    return max(scores, default=0)
+
+
+def _validate_store_name_match(store: str, original_name: str) -> None:
+    filename_text = _normalize_filename_text(original_name)
+    scores = {
+        candidate: _store_match_score(filename_text, aliases)
+        for candidate, aliases in STORE_NAME_ALIASES.items()
+    }
+    best_store, best_score = max(scores.items(), key=lambda item: item[1])
+    selected_score = scores.get(store, 0)
+    if best_score >= 0.62 and best_store != store:
+        raise ValueError(
+            f"{store}：文件名「{Path(original_name).name}」更像是「{best_store}」的报表，请确认店铺选择。"
+        )
+    if selected_score < 0.42:
+        raise ValueError(
+            f"{store}：文件名「{Path(original_name).name}」没有明显匹配「{store}」，请确认没有选错店铺。"
+        )
 
 
 def _existing_store_files(data_dir: Path, store: str) -> list[Path]:
