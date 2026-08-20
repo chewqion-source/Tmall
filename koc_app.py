@@ -118,10 +118,7 @@ def calculate_settlement(price: pd.Series, rebate: pd.Series) -> pd.Series:
 
 
 def normalize_rebate_percent(value: pd.Series) -> pd.Series:
-    rebate = pd.to_numeric(value, errors="coerce")
-    legacy_decimal = rebate.notna() & rebate.gt(0) & rebate.le(1)
-    rebate = rebate.mask(legacy_decimal, rebate * 100)
-    return rebate
+    return pd.to_numeric(value, errors="coerce")
 
 
 def normalize_koc_data(df: pd.DataFrame) -> pd.DataFrame:
