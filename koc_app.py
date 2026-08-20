@@ -10,6 +10,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from ui_helpers import dashboard_url, roi_url, sidebar_link, SIDEBAR_BUTTON_WIDTH
+
 
 st.set_page_config(page_title="达人管理", page_icon="🤝", layout="wide")
 
@@ -252,17 +254,9 @@ koc_path = get_koc_path()
 
 with st.sidebar:
     st.header("达人管理")
-    st.link_button(
-        "返回主看板",
-        os.environ.get("TMALL_DASHBOARD_URL", "http://150.158.133.102/"),
-        width="content",
-    )
-    st.link_button(
-        "投产计算器",
-        os.environ.get("TMALL_ROI_URL", "http://150.158.133.102/roi/"),
-        width="content",
-    )
-    if st.button("重新读取达人表", width="content"):
+    sidebar_link("返回主看板", dashboard_url())
+    sidebar_link("投产计算器", roi_url())
+    if st.button("重新读取达人表", width=SIDEBAR_BUTTON_WIDTH):
         st.cache_data.clear()
 
 title_col, create_col = st.columns([5, 1], vertical_alignment="center")

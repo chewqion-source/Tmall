@@ -9,13 +9,21 @@ import streamlit as st
 
 from data_loader import STORE_FILE_PATTERNS, find_store_workbooks
 from upload_manager import install_uploaded_workbooks
+from ui_helpers import ai_image_url, dashboard_url as default_dashboard_url, koc_url, roi_url, sidebar_link
 
 
 st.set_page_config(page_title="天猫日报上传", page_icon="📤", layout="wide")
 
 
 data_dir = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
-dashboard_url = os.environ.get("TMALL_DASHBOARD_URL", "http://150.158.133.102:8080")
+dashboard_url = os.environ.get("TMALL_DASHBOARD_URL", default_dashboard_url())
+
+with st.sidebar:
+    st.header("财务上传")
+    sidebar_link("返回主看板", dashboard_url)
+    sidebar_link("投产计算器", roi_url())
+    sidebar_link("达人管理", koc_url())
+    sidebar_link("AI 生图", ai_image_url())
 
 st.title("📤 财务日报上传")
 st.caption("选择对应店铺文件。系统会先校验文件名与店铺是否匹配，成功后才替换服务器正式报表。")

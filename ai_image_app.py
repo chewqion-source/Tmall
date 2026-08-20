@@ -14,6 +14,8 @@ from typing import Any
 
 import streamlit as st
 
+from ui_helpers import dashboard_url, koc_url, roi_url, sidebar_link
+
 
 st.set_page_config(page_title="AI 生图", page_icon="🎨", layout="wide")
 
@@ -30,6 +32,10 @@ def get_data_dir() -> Path:
 
 def get_history_path() -> Path:
     return get_data_dir() / "ai-image-history.jsonl"
+
+
+def get_history_image_dir() -> Path:
+    return get_data_dir() / "ai-images"
 
 
 def api_base_url() -> str:
@@ -127,6 +133,21 @@ def image_download_name(content_type: str) -> str:
     return f"grsai-{timestamp}{extension}"
 
 
+def save_history_image(image_url: str, created_at: datetime) -> tuple[str | None, str | None]:
+    try:
+        image_bytes, content_type = fetch_image_for_download(image_url)
+    except Exception:
+        return None, None
+    extension = mimetypes.guess_extension(content_type) or ".png"
+    if extension == ".jpe":
+        extension = ".jpg"
+    image_dir = get_history_image_dir() / created_at.strftime("%Y%m%d")
+    image_dir.mkdir(parents=True, exist_ok=True)
+    image_path = image_dir / f"{created_at.strftime('%H%M%S')}-{abs(hash(image_url)) % 1000000:06d}{extension}"
+    image_path.write_bytes(image_bytes)
+    return str(image_path), content_type
+
+
 def reference_image_data_url(uploaded_image: Any) -> str:
     image_bytes = uploaded_image.getvalue()
     if not image_bytes:
@@ -196,15 +217,20 @@ def generate_image(prompt: str, aspect_ratio: str, reference_images: list[str] |
     raise RuntimeError("生图任务超时，请稍后再试")
 
 
-def save_history(prompt: str, aspect_ratio: str, image_url: str) -> None:
+def save_history(prompt: str, aspect_ratio: str, image_url: str, has_reference: bool) -> None:
     history_path = get_history_path()
     history_path.parent.mkdir(parents=True, exist_ok=True)
+    created_at = datetime.now(timezone.utc)
+    local_image_path, image_mime = save_history_image(image_url, created_at)
     record = {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": created_at.isoformat(),
         "model": MODEL_NAME,
         "aspect_ratio": aspect_ratio,
         "prompt": prompt,
         "image_url": image_url,
+        "local_image_path": local_image_path,
+        "image_mime": image_mime,
+        "has_reference": has_reference,
     }
     with history_path.open("a", encoding="utf-8") as history_file:
         history_file.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -225,21 +251,9 @@ def load_history(limit: int = 20) -> list[dict[str, Any]]:
 
 with st.sidebar:
     st.header("AI 生图")
-    st.link_button(
-        "返回主看板",
-        os.environ.get("TMALL_DASHBOARD_URL", "http://150.158.133.102/"),
-        width="content",
-    )
-    st.link_button(
-        "投产计算器",
-        os.environ.get("TMALL_ROI_URL", "http://150.158.133.102/roi/"),
-        width="content",
-    )
-    st.link_button(
-        "达人管理",
-        os.environ.get("TMALL_KOC_URL", "http://150.158.133.102/koc/"),
-        width="content",
-    )
+    sidebar_link("返回主看板", dashboard_url())
+    sidebar_link("投产计算器", roi_url())
+    sidebar_link("达人管理", koc_url())
 
 title_col, credits_col = st.columns([3, 1], vertical_alignment="center")
 with title_col:
@@ -282,7 +296,7 @@ if submitted:
                 if uploaded_reference is not None:
                     reference_images.append(reference_image_data_url(uploaded_reference))
                 image_url = generate_image(prompt.strip(), aspect_ratio, reference_images)
-                save_history(prompt.strip(), aspect_ratio, image_url)
+                save_history(prompt.strip(), aspect_ratio, image_url, bool(reference_images))
         except Exception as exc:
             st.error(f"生成失败：{exc}")
         else:
@@ -316,9 +330,22 @@ if history:
     st.subheader("最近生成")
     for item in history:
         with st.container(border=True):
-            st.caption(f"{item.get('created_at', '')} ｜ {item.get('aspect_ratio', '')}")
+            reference_label = "参考图" if item.get("has_reference") else "纯文字"
+            st.caption(f"{item.get('created_at', '')} ｜ {item.get('aspect_ratio', '')} ｜ {reference_label}")
             st.write(item.get("prompt", ""))
+            local_image_path = item.get("local_image_path")
             image_url = item.get("image_url")
-            if image_url:
+            if local_image_path and Path(str(local_image_path)).exists():
+                st.image(str(local_image_path), width=320)
+                image_bytes = Path(str(local_image_path)).read_bytes()
+                st.download_button(
+                    "下载图片",
+                    data=image_bytes,
+                    file_name=Path(str(local_image_path)).name,
+                    mime=item.get("image_mime") or "image/png",
+                    width="content",
+                    on_click="ignore",
+                )
+            elif image_url:
                 st.image(image_url, width=320)
-                st.link_button("打开图片", image_url)
+                st.link_button("打开图片", image_url, width="content")

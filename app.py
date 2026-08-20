@@ -19,6 +19,7 @@ from data_loader import (
     load_store_daily,
     validate_known_sample,
 )
+from ui_helpers import ai_image_url, koc_url, roi_url, sidebar_link, upload_url
 
 
 st.set_page_config(page_title="天猫四店日报分析", page_icon="📊", layout="wide")
@@ -148,26 +149,10 @@ def render_profit_trend(data: pd.DataFrame) -> None:
 
 with st.sidebar:
     st.header("店铺与数据")
-    st.link_button(
-        "财务上传报表",
-        os.environ.get("TMALL_UPLOAD_URL", "http://150.158.133.102:8080/upload/"),
-        width="content",
-    )
-    st.link_button(
-        "投产计算器",
-        os.environ.get("TMALL_ROI_URL", "http://150.158.133.102/roi/"),
-        width="content",
-    )
-    st.link_button(
-        "达人管理",
-        os.environ.get("TMALL_KOC_URL", "http://150.158.133.102/koc/"),
-        width="content",
-    )
-    st.link_button(
-        "AI 生图",
-        os.environ.get("TMALL_AI_IMAGE_URL", "http://150.158.133.102/ai-image/"),
-        width="content",
-    )
+    sidebar_link("财务上传报表", upload_url())
+    sidebar_link("投产计算器", roi_url())
+    sidebar_link("达人管理", koc_url())
+    sidebar_link("AI 生图", ai_image_url())
 
 try:
     sources = find_store_workbooks()
