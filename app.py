@@ -174,23 +174,27 @@ def _render_rank_bars(
     title: str,
     empty_text: str,
 ) -> None:
-    st.markdown(f"**{title}**")
     if data.empty:
-        st.info(empty_text)
+        st.caption(empty_text)
         return
 
-    max_abs = max(abs(float(value)) for value in data[value_col]) or 1
-    for index, row in data.reset_index(drop=True).iterrows():
-        value = float(row[value_col])
-        product_id = str(row["商品ID"])
-        short_id = _product_axis_label(product_id)
-        label_col, value_col_ui = st.columns([1.35, 1], vertical_alignment="center")
-        with label_col:
-            st.write(f"{index + 1}. `{short_id}`")
-            st.caption(f"完整ID {product_id} ｜ 销量 {float(row['销量']):,.0f} ｜ 订单 {float(row['订单量']):,.0f}")
-        with value_col_ui:
-            st.metric("实时盈亏", _format_money(value))
-        st.progress(_progress_ratio(value, max_abs))
+    compact = data.reset_index(drop=True).copy()
+    compact.insert(0, "排名", compact.index + 1)
+    compact["商品ID"] = compact["商品ID"].map(_product_axis_label)
+    compact = compact[["排名", "商品ID", "销量", "订单量", value_col]]
+    st.caption(title)
+    st.dataframe(
+        compact,
+        hide_index=True,
+        width="stretch",
+        height=36 + 35 * len(compact),
+        column_config={
+            "排名": st.column_config.NumberColumn("排名", format="%d"),
+            "销量": st.column_config.NumberColumn("销量", format="%d"),
+            "订单量": st.column_config.NumberColumn("订单", format="%d"),
+            value_col: st.column_config.NumberColumn("实时盈亏", format="¥%.2f"),
+        },
+    )
 
 
 def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
@@ -216,17 +220,23 @@ def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
     metric_cols[3].metric("实时盈亏", f"¥{latest_overview['实时盈亏'].sum():,.2f}")
 
     max_profit = max(abs(float(value)) for value in latest_overview["实时盈亏"]) or 1
-    store_cols = st.columns(len(latest_overview))
-    for column, (_, row) in zip(store_cols, latest_overview.iterrows()):
-        profit = float(row["实时盈亏"])
-        with column:
-            st.metric(str(row["店铺"]), _format_money(profit))
-            st.progress(_progress_ratio(profit, max_profit))
-            st.caption(
-                f"销量 {float(row['销量']):,.0f} ｜ "
-                f"订单 {float(row['订单量']):,.0f} ｜ "
-                f"商品 {float(row['商品数']):,.0f}"
-            )
+    compact_overview = latest_overview.copy()
+    compact_overview.insert(0, "排名", compact_overview.index + 1)
+    compact_overview["盈亏占比"] = compact_overview["实时盈亏"].map(lambda value: _progress_ratio(value, max_profit))
+    st.dataframe(
+        compact_overview[["排名", "店铺", "销量", "订单量", "商品数", "实时盈亏", "盈亏占比"]],
+        hide_index=True,
+        width="stretch",
+        height=36 + 35 * len(compact_overview),
+        column_config={
+            "排名": st.column_config.NumberColumn("排名", format="%d"),
+            "销量": st.column_config.NumberColumn("销量", format="%d"),
+            "订单量": st.column_config.NumberColumn("订单", format="%d"),
+            "商品数": st.column_config.NumberColumn("商品", format="%d"),
+            "实时盈亏": st.column_config.NumberColumn("实时盈亏", format="¥%.2f"),
+            "盈亏占比": st.column_config.ProgressColumn("强度", min_value=0, max_value=1, format="%.0f%%"),
+        },
+    )
 
 
 def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
@@ -245,10 +255,8 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
     )
 
     st.subheader(f"{latest_date:%Y-%m-%d} 店铺商品盈利 / 亏损 TOP5")
-    stores = sorted(product_daily["store"].unique())
-    tabs = st.tabs(stores)
-
-    for tab, store in zip(tabs, stores):
+    rank_rows: list[pd.DataFrame] = []
+    for store in sorted(product_daily["store"].unique()):
         store_products = product_daily[product_daily["store"] == store].copy()
         if store_products.empty:
             continue
@@ -259,29 +267,43 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
             .head(5)
             .rename(columns={"product_id": "商品ID"})
         )
+        if not profit_top.empty:
+            profit_top.insert(0, "类型", "盈利")
+            profit_top.insert(0, "店铺", store)
+            profit_top.insert(2, "排名", range(1, len(profit_top) + 1))
+            rank_rows.append(profit_top)
+
         loss_top = (
             store_products[store_products["实时盈亏"] < 0]
             .sort_values("实时盈亏", ascending=True)
             .head(5)
             .rename(columns={"product_id": "商品ID"})
         )
+        if not loss_top.empty:
+            loss_top.insert(0, "类型", "亏损")
+            loss_top.insert(0, "店铺", store)
+            loss_top.insert(2, "排名", range(1, len(loss_top) + 1))
+            rank_rows.append(loss_top)
 
-        with tab:
-            left_col, right_col = st.columns(2)
-            with left_col:
-                _render_rank_bars(
-                    profit_top,
-                    "实时盈亏",
-                    "实时 TOP5 盈利产品",
-                    "暂无盈利产品",
-                )
-            with right_col:
-                _render_rank_bars(
-                    loss_top,
-                    "实时盈亏",
-                    "实时 TOP5 亏损产品",
-                    "暂无亏损产品",
-                )
+    if not rank_rows:
+        st.info("暂无商品盈利 / 亏损数据")
+        return
+
+    compact_rank = pd.concat(rank_rows, ignore_index=True)
+    compact_rank["商品ID"] = compact_rank["商品ID"].map(_product_axis_label)
+    compact_rank = compact_rank[["店铺", "类型", "排名", "商品ID", "销量", "订单量", "实时盈亏"]]
+    st.dataframe(
+        compact_rank,
+        hide_index=True,
+        width="stretch",
+        height=min(560, 36 + 35 * len(compact_rank)),
+        column_config={
+            "排名": st.column_config.NumberColumn("排名", format="%d"),
+            "销量": st.column_config.NumberColumn("销量", format="%d"),
+            "订单量": st.column_config.NumberColumn("订单", format="%d"),
+            "实时盈亏": st.column_config.NumberColumn("实时盈亏", format="¥%.2f"),
+        },
+    )
 
 
 with st.sidebar:
