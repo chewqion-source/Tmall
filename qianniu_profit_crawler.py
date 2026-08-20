@@ -2099,9 +2099,18 @@ def load_cost_config(
 
         if col not in cost_df.columns:
 
+            default_value = (
+                0.05
+                if col in [
+                    "平台扣点",
+                    "税点",
+                ]
+                else 0
+            )
+
             cost_df[
                 col
-            ] = 0
+            ] = default_value
 
         cost_df[
             col
@@ -2110,6 +2119,20 @@ def load_cost_config(
                 col
             ]
         )
+
+    for rate_col in [
+        "平台扣点",
+        "税点",
+    ]:
+
+        cost_df.loc[
+            cost_df[
+                rate_col
+            ]
+            <=
+            0,
+            rate_col
+        ] = 0.05
 
     # --------------------------------------------------------
     # 每次抓取都会自动把新商品加入成本表

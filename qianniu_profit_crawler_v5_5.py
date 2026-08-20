@@ -694,12 +694,24 @@ def integrate_shop(
         )
     )
 
+    any_sku_mask = (
+        df[
+            "SKU订单数"
+        ]
+        >
+        0
+    )
+
     df[
         "SKU成本来源"
     ] = np.where(
         exact_mask,
         "订单SKU真实成本",
-        "保留原成本"
+        np.where(
+            partial_mask,
+            "订单SKU部分成本",
+            "保留原成本"
+        )
     )
 
     # 补齐后续计算字段
@@ -722,23 +734,24 @@ def integrate_shop(
             df[col]
         )
 
-    # 真正替换 SKU 实际成本
+    # 使用订单 SKU 已识别到的单件货成本和快递成本。
+    # 即使存在未匹配 SKU，也先计入已知成本，同时保留未匹配行数提示。
     df.loc[
-        exact_mask,
+        any_sku_mask,
         "货品成本"
     ] = (
         df.loc[
-            exact_mask,
+            any_sku_mask,
             "SKU货品成本"
         ]
     )
 
     df.loc[
-        exact_mask,
+        any_sku_mask,
         "快递成本"
     ] = (
         df.loc[
-            exact_mask,
+            any_sku_mask,
             "SKU快递成本"
         ]
     )
