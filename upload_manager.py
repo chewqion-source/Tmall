@@ -11,7 +11,17 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Mapping
 
-from data_loader import STORE_FILE_PATTERNS, SUPPORTED_EXTENSIONS, load_product_daily
+import pandas as pd
+
+from data_loader import (
+    DATE_SHEET_PATTERN,
+    STORE_FILE_PATTERNS,
+    SUPPORTED_EXTENSIONS,
+    SheetData,
+    _infer_year,
+    _iter_sheets,
+    load_product_daily,
+)
 
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -44,6 +54,9 @@ class UploadResult:
     sales: float
     orders: float
     profit: float
+    added_dates: int = 0
+    updated_dates: int = 0
+    skipped_dates: int = 0
 
 
 def _validate_upload(store: str, original_name: str, content: bytes) -> str:
@@ -110,14 +123,124 @@ def _existing_store_files(data_dir: Path, store: str) -> list[Path]:
     )
 
 
+def _sheet_date(sheet_name: str, year: int) -> pd.Timestamp | None:
+    match = DATE_SHEET_PATTERN.fullmatch(sheet_name.strip())
+    if not match:
+        return None
+    return pd.Timestamp(year, int(match.group(1)), int(match.group(2)))
+
+
+def _date_sheets(path: Path) -> dict[pd.Timestamp, SheetData]:
+    year = _infer_year(path)
+    sheets: dict[pd.Timestamp, SheetData] = {}
+    for sheet in _iter_sheets(path):
+        sheet_date = _sheet_date(sheet.name, year)
+        if sheet_date is not None:
+            sheets[sheet_date] = sheet
+    return sheets
+
+
+def _daily_fingerprints(path: Path) -> dict[pd.Timestamp, str]:
+    daily = load_product_daily(path)
+    fingerprints: dict[pd.Timestamp, str] = {}
+    compare_columns = ["product_id", "sales_qty", "order_count", "profit", "sku_count", "skus"]
+    for sheet_date, group in daily.groupby("date"):
+        comparable = group[compare_columns].sort_values("product_id", ignore_index=True)
+        payload = comparable.to_json(orient="records", force_ascii=False, double_precision=6)
+        fingerprints[pd.Timestamp(sheet_date)] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return fingerprints
+
+
+def _write_merged_workbook(sheets_by_date: Mapping[pd.Timestamp, SheetData], target_path: Path) -> None:
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
+
+    for sheet_date in sorted(sheets_by_date):
+        source = sheets_by_date[sheet_date]
+        sheet = workbook.create_sheet(source.name[:31])
+        for row_index, row in enumerate(source.rows, start=1):
+            for column_index, value in enumerate(row, start=1):
+                sheet.cell(row=row_index, column=column_index, value=value)
+        for row_start, row_end, col_start, col_end in source.merged_ranges:
+            if row_end > row_start + 1 or col_end > col_start + 1:
+                sheet.merge_cells(
+                    start_row=row_start + 1,
+                    start_column=col_start + 1,
+                    end_row=row_end,
+                    end_column=col_end,
+                )
+
+    temporary_path = target_path.with_name(f".{target_path.name}.{uuid.uuid4().hex}.tmp.xlsx")
+    try:
+        workbook.save(temporary_path)
+        os.replace(temporary_path, target_path)
+    finally:
+        workbook.close()
+        temporary_path.unlink(missing_ok=True)
+
+
+def _merge_uploaded_workbook(staged_path: Path, target_path: Path) -> tuple[int, int, int]:
+    incoming_sheets = _date_sheets(staged_path)
+    incoming_fingerprints = _daily_fingerprints(staged_path)
+    if not incoming_sheets:
+        raise ValueError("上传文件没有可合并的日期 Sheet")
+
+    existing_path = target_path if target_path.exists() else None
+    if existing_path is None:
+        existing_candidates = _existing_store_files(target_path.parent, _store_from_target(target_path))
+        existing_path = (
+            max(existing_candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
+            if existing_candidates
+            else None
+        )
+
+    existing_sheets: dict[pd.Timestamp, SheetData] = {}
+    existing_fingerprints: dict[pd.Timestamp, str] = {}
+    if existing_path:
+        try:
+            existing_sheets = _date_sheets(existing_path)
+            existing_fingerprints = _daily_fingerprints(existing_path)
+        except Exception:
+            existing_sheets = {}
+            existing_fingerprints = {}
+
+    merged_sheets = dict(existing_sheets)
+    added = updated = skipped = 0
+    for sheet_date, sheet in incoming_sheets.items():
+        if sheet_date not in existing_sheets:
+            added += 1
+            merged_sheets[sheet_date] = sheet
+        elif existing_fingerprints.get(sheet_date) != incoming_fingerprints.get(sheet_date):
+            updated += 1
+            merged_sheets[sheet_date] = sheet
+        else:
+            skipped += 1
+
+    _write_merged_workbook(merged_sheets, target_path)
+    return added, updated, skipped
+
+
+def _store_from_target(target_path: Path) -> str:
+    stem = target_path.stem
+    for store, basename in STORE_CANONICAL_BASENAMES.items():
+        if stem.startswith(basename):
+            return store
+    raise ValueError(f"无法识别目标文件所属店铺：{target_path.name}")
+
+
 def install_uploaded_workbooks(
     uploads: Mapping[str, tuple[str, bytes]], data_dir: str | Path
 ) -> list[UploadResult]:
-    """Validate every workbook, then archive old files and install atomically.
+    """Validate every workbook, then merge uploaded date sheets atomically.
 
     The caller supplies an explicit store for each file, so finance users do not
-    have to preserve a particular filename. File contents are parsed before any
-    current workbook is changed.
+    have to preserve a particular filename. File contents are parsed before the
+    current workbook is changed. Existing historical dates are preserved unless
+    the uploaded date has different aggregate data, in which case that date is
+    overwritten.
     """
     if not uploads:
         raise ValueError("请至少选择一家店铺的日报")
@@ -132,7 +255,7 @@ def install_uploaded_workbooks(
     try:
         for store, (original_name, content) in uploads.items():
             suffix = _validate_upload(store, original_name, content)
-            canonical_name = f"{STORE_CANONICAL_BASENAMES[store]}{suffix}"
+            canonical_name = f"{STORE_CANONICAL_BASENAMES[store]}.xlsx"
             target_path = target_dir / canonical_name
             with tempfile.NamedTemporaryFile(
                 mode="wb",
@@ -167,12 +290,23 @@ def install_uploaded_workbooks(
         for store, _original_name, staged_path, target_path, result in prepared:
             archive_dir = target_dir / "archive" / store
             archive_dir.mkdir(parents=True, exist_ok=True)
-            for existing in _existing_store_files(target_dir, store):
+            existing_files = _existing_store_files(target_dir, store)
+            for existing in existing_files:
                 archive_name = f"{timestamp}-{uuid.uuid4().hex[:8]}-{existing.name}"
-                os.replace(existing, archive_dir / archive_name)
-            os.replace(staged_path, target_path)
+                archive_copy = archive_dir / archive_name
+                archive_copy.write_bytes(existing.read_bytes())
+            added, updated, skipped = _merge_uploaded_workbook(staged_path, target_path)
             if os.name != "nt":
                 target_path.chmod(0o640)
+            result = UploadResult(
+                **{
+                    **asdict(result),
+                    "saved_name": target_path.name,
+                    "added_dates": added,
+                    "updated_dates": updated,
+                    "skipped_dates": skipped,
+                }
+            )
             results.append(result)
 
         history_path = target_dir / "upload-history.jsonl"

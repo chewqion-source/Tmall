@@ -82,6 +82,16 @@ def test_finance_upload_validates_archives_and_installs_atomically():
         assert len(results) == 1
         assert results[0].store == "易丽洁"
         assert results[0].date_sheets == 13
-        assert target.read_bytes() == workbook.read_bytes()
+        assert results[0].added_dates == 13
+        assert results[0].updated_dates == 0
+        assert results[0].skipped_dates == 0
+        assert load_product_daily(target)["date"].nunique() == 13
         assert len(list((data_dir / "archive" / "易丽洁").glob("*.xlsx"))) == 1
         assert (data_dir / "upload-history.jsonl").is_file()
+
+        repeated = install_uploaded_workbooks(
+            {"易丽洁": (workbook.name, workbook.read_bytes())}, data_dir
+        )
+        assert repeated[0].added_dates == 0
+        assert repeated[0].updated_dates == 0
+        assert repeated[0].skipped_dates == 13

@@ -26,7 +26,7 @@ with st.sidebar:
     sidebar_link("AI 生图", ai_image_url())
 
 st.title("📤 财务日报上传")
-st.caption("选择对应店铺文件。系统会先校验文件名与店铺是否匹配，成功后才替换服务器正式报表。")
+st.caption("选择对应店铺文件。系统会先校验文件名与店铺是否匹配，成功后按日期合并到服务器正式报表。")
 
 st.info("当前统计范围从 2026-07-01 开始；支持 .xls、.xlsx、.xlsm，单个文件最大 25MB。")
 
@@ -61,7 +61,7 @@ with st.form("workbook_uploads", clear_on_submit=False):
                 key=f"upload_{store}",
                 help="文件名需要能看出对应店铺，系统会做模糊匹配，防止选错店铺。",
             )
-    submitted = st.form_submit_button("校验并更新服务器报表", type="primary", width="stretch")
+    submitted = st.form_submit_button("校验并合并服务器报表", type="primary", width="stretch")
 
 if submitted:
     uploads = {
@@ -75,7 +75,7 @@ if submitted:
     except Exception as exc:
         st.error(f"上传未生效：{exc}")
     else:
-        st.success("上传成功。旧文件已归档，主看板刷新后会自动读取新文件。")
+        st.success("上传成功。历史日期已保留；新增日期已加入，有变化的旧日期已覆盖，一致的旧日期已跳过。")
         result_rows = [
             {
                 "店铺": result.store,
@@ -83,6 +83,9 @@ if submitted:
                 "起始日期": result.start_date,
                 "截止日期": result.end_date,
                 "日期数": result.date_sheets,
+                "新增日期": result.added_dates,
+                "覆盖日期": result.updated_dates,
+                "跳过日期": result.skipped_dates,
                 "商品数": result.products,
                 "销量": result.sales,
                 "订单量": result.orders,
@@ -98,8 +101,9 @@ with st.expander("上传规则与数据安全"):
         """
 - 可以只上传一家，也可以一次上传多家；未选择的店铺不会改变。
 - 文件名会与选择的店铺做模糊匹配；明显选错店铺时不会替换正式数据。
-- 所有文件会先在临时目录完整解析，任一文件校验失败时不会替换正式数据。
-- 校验通过后使用原子替换；旧报表保存在服务器 `data/archive/店铺/` 目录。
+- 所有文件会先在临时目录完整解析，任一文件校验失败时不会更新正式数据。
+- 校验通过后按日期合并：新日期直接加入，旧日期数据有变化则覆盖，完全一致则跳过。
+- 每次更新前会把原正式报表备份到服务器 `data/archive/店铺/` 目录。
 - 上传内容不会进入 Git 仓库，Git 只保存程序代码。
 - 主看板刷新后按文件内容指纹自动重建缓存；文件不变时继续命中磁盘缓存。
 """
