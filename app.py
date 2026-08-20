@@ -91,7 +91,7 @@ def filter_trend_range(data: pd.DataFrame, range_label: str) -> pd.DataFrame:
     return filtered if not filtered.empty else data.tail(1)
 
 
-def render_sales_orders_trend(data: pd.DataFrame) -> None:
+def render_sales_orders_trend(data: pd.DataFrame, height: int = 360) -> None:
     sales_fig = make_subplots(specs=[[{"secondary_y": True}]])
     sales_fig.add_trace(
         go.Scatter(
@@ -117,18 +117,19 @@ def render_sales_orders_trend(data: pd.DataFrame) -> None:
         ),
         secondary_y=True,
     )
-    sales_fig.update_xaxes(title_text="日期")
+    sales_fig.update_xaxes(title_text="")
     sales_fig.update_yaxes(title_text="销量", secondary_y=False)
-    sales_fig.update_yaxes(title_text="订单量", secondary_y=True, rangemode="tozero")
+    sales_fig.update_yaxes(title_text="订单", secondary_y=True, rangemode="tozero")
     sales_fig.update_layout(
-        margin=dict(l=10, r=10, t=20, b=10),
+        height=height,
+        margin=dict(l=6, r=6, t=8, b=4),
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=11)),
     )
     st.plotly_chart(sales_fig, width="stretch")
 
 
-def render_profit_trend(data: pd.DataFrame) -> None:
+def render_profit_trend(data: pd.DataFrame, height: int = 360) -> None:
     profit_colors = ["#16a34a" if value >= 0 else "#dc2626" for value in data["profit"]]
     profit_fig = go.Figure(
         go.Bar(
@@ -142,7 +143,10 @@ def render_profit_trend(data: pd.DataFrame) -> None:
     )
     profit_fig.add_hline(y=0, line_color="#64748b", line_width=1)
     profit_fig.update_layout(
-        xaxis_title="日期", yaxis_title="盈亏（元）", margin=dict(l=10, r=10, t=20, b=10)
+        height=height,
+        xaxis_title="",
+        yaxis_title="盈亏",
+        margin=dict(l=6, r=6, t=8, b=4),
     )
     st.plotly_chart(profit_fig, width="stretch")
 
@@ -228,21 +232,20 @@ metric_cols[3].metric(
     delta=signed(latest["profit_change"]) if pd.notna(latest["profit_change"]) else None,
 )
 
-st.subheader(f"{selected_store}全店趋势（{trend_range}）")
-store_left, store_right = st.columns(2)
-with store_left:
-    render_sales_orders_trend(trend_store)
-with store_right:
-    render_profit_trend(trend_store)
-
-left, right = st.columns(2)
-with left:
-    st.subheader(f"单品销量 / 订单量趋势（{trend_range}）")
-    render_sales_orders_trend(trend_selected)
-
-with right:
-    st.subheader(f"单品盈亏趋势（{trend_range}）")
-    render_profit_trend(trend_selected)
+st.subheader(f"核心趋势（{trend_range}）")
+chart_cols = st.columns(4)
+with chart_cols[0]:
+    st.markdown("**累计销量趋势**")
+    render_sales_orders_trend(trend_store, height=300)
+with chart_cols[1]:
+    st.markdown("**累计盈亏趋势**")
+    render_profit_trend(trend_store, height=300)
+with chart_cols[2]:
+    st.markdown("**单品最新销量趋势**")
+    render_sales_orders_trend(trend_selected, height=300)
+with chart_cols[3]:
+    st.markdown("**单品最新盈亏趋势**")
+    render_profit_trend(trend_selected, height=300)
 
 st.subheader("销量 / 盈亏日环比变化")
 changes = selected[
