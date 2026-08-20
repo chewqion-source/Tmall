@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime
+from io import BytesIO
 import mimetypes
 import os
 from pathlib import Path
@@ -23,6 +25,24 @@ from ui_helpers import ai_image_url, koc_url, roi_url, sidebar_link, upload_url
 
 
 st.set_page_config(page_title="天猫四店日报分析", page_icon="📊", layout="wide")
+
+SKU_COST_HEADERS = [
+    "店铺",
+    "商品ID",
+    "商家编码",
+    "SKU规格",
+    "单件货价",
+    "快递费",
+    "备注",
+    "首次发现日期",
+    "最近成交日期",
+]
+SKU_COST_PATH = Path(
+    os.environ.get(
+        "SKU_COST_FILE",
+        Path(__file__).resolve().parent / "data" / "sku_cost.xlsx",
+    )
+)
 
 
 @st.cache_data(show_spinner="正在读取并聚合四家店铺的 Excel…")
@@ -51,6 +71,163 @@ def color_profit(value: object) -> str:
     if number < 0:
         return "color: #b91c1c; background-color: #fee2e2; font-weight: 700"
     return "color: #475569"
+
+
+def _empty_sku_cost_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=SKU_COST_HEADERS)
+
+
+def load_sku_cost_frame(path: Path = SKU_COST_PATH) -> pd.DataFrame:
+    if not path.exists():
+        return _empty_sku_cost_frame()
+
+    data = pd.read_excel(path, dtype={"店铺": str, "商品ID": str, "商家编码": str, "SKU规格": str})
+    for column in SKU_COST_HEADERS:
+        if column not in data.columns:
+            data[column] = ""
+    data = data[SKU_COST_HEADERS].copy()
+    for column in ["单件货价", "快递费"]:
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+    for column in ["店铺", "商品ID", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
+        data[column] = data[column].fillna("").astype(str)
+    return data
+
+
+def save_sku_cost_frame(data: pd.DataFrame, path: Path = SKU_COST_PATH) -> Path | None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path = None
+    if path.exists():
+        backup_dir = path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / f"sku_cost_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+        backup_path.write_bytes(path.read_bytes())
+
+    cleaned = data.copy()
+    for column in SKU_COST_HEADERS:
+        if column not in cleaned.columns:
+            cleaned[column] = ""
+    cleaned = cleaned[SKU_COST_HEADERS]
+    for column in ["店铺", "商品ID", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
+        cleaned[column] = cleaned[column].fillna("").astype(str).str.strip()
+    for column in ["单件货价", "快递费"]:
+        cleaned[column] = pd.to_numeric(cleaned[column], errors="coerce").round(2)
+
+    has_key = (
+        cleaned["店铺"].ne("")
+        | cleaned["商品ID"].ne("")
+        | cleaned["商家编码"].ne("")
+        | cleaned["SKU规格"].ne("")
+    )
+    cleaned = cleaned[has_key].drop_duplicates(
+        subset=["店铺", "商品ID", "商家编码", "SKU规格"],
+        keep="last",
+    )
+    cleaned.to_excel(path, index=False, sheet_name="SKU成本配置")
+    return backup_path
+
+
+def sku_cost_download_bytes(data: pd.DataFrame) -> bytes:
+    output = BytesIO()
+    data.to_excel(output, index=False, sheet_name="SKU成本配置")
+    return output.getvalue()
+
+
+def render_sku_cost_manager() -> None:
+    st.title("SKU 成本维护")
+    st.caption(f"当前文件：{SKU_COST_PATH}")
+
+    uploaded = st.file_uploader("导入现有 sku_cost.xlsx", type=["xlsx"])
+    if uploaded is not None:
+        imported = pd.read_excel(uploaded, dtype={"店铺": str, "商品ID": str, "商家编码": str, "SKU规格": str})
+        backup_path = save_sku_cost_frame(imported)
+        st.success(
+            "已导入并保存。"
+            + (f" 旧文件备份：{backup_path.name}" if backup_path else "")
+        )
+        st.rerun()
+
+    data = load_sku_cost_frame()
+    missing_cost = data["单件货价"].isna() | data["快递费"].isna()
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("SKU 行数", f"{len(data):,.0f}")
+    metric_cols[1].metric("已填成本", f"{len(data) - int(missing_cost.sum()):,.0f}")
+    metric_cols[2].metric("待补成本", f"{int(missing_cost.sum()):,.0f}")
+    metric_cols[3].metric("涉及店铺", f"{data['店铺'].replace('', pd.NA).dropna().nunique():,.0f}")
+
+    filter_cols = st.columns([1, 1.2, 1])
+    stores = sorted(store for store in data["店铺"].dropna().unique() if str(store).strip())
+    with filter_cols[0]:
+        selected_store = st.selectbox("店铺筛选", ["全部"] + stores)
+    with filter_cols[1]:
+        keyword = st.text_input("搜索商品ID / 商家编码 / SKU规格")
+    with filter_cols[2]:
+        only_missing = st.toggle("只看待补成本", value=False)
+
+    view = data.copy()
+    view["_row_id"] = view.index
+    if selected_store != "全部":
+        view = view[view["店铺"] == selected_store]
+    if keyword:
+        query = keyword.strip()
+        view = view[
+            view["商品ID"].str.contains(query, case=False, na=False)
+            | view["商家编码"].str.contains(query, case=False, na=False)
+            | view["SKU规格"].str.contains(query, case=False, na=False)
+        ]
+    if only_missing:
+        view = view[view["单件货价"].isna() | view["快递费"].isna()]
+
+    st.caption("可直接修改单件货价、快递费，也可以在最后新增行。保存后会写回线上 sku_cost.xlsx。")
+    edited = st.data_editor(
+        view,
+        hide_index=True,
+        num_rows="dynamic",
+        width="stretch",
+        height=560,
+        column_config={
+            "店铺": st.column_config.SelectboxColumn("店铺", options=["易丽洁", "咖时光", "坐拥_宁静", "坐拥宁静"]),
+            "商品ID": st.column_config.TextColumn("商品ID"),
+            "商家编码": st.column_config.TextColumn("商家编码"),
+            "SKU规格": st.column_config.TextColumn("SKU规格"),
+            "单件货价": st.column_config.NumberColumn("单件货价", min_value=0, step=0.01, format="¥%.2f"),
+            "快递费": st.column_config.NumberColumn("快递费", min_value=0, step=0.01, format="¥%.2f"),
+            "备注": st.column_config.TextColumn("备注"),
+            "首次发现日期": st.column_config.TextColumn("首次发现日期"),
+            "最近成交日期": st.column_config.TextColumn("最近成交日期"),
+            "_row_id": None,
+        },
+        key="sku_cost_editor",
+    )
+
+    action_cols = st.columns([1, 1, 4])
+    with action_cols[0]:
+        if st.button("保存成本表", type="primary", width="stretch"):
+            edited_existing = edited[pd.to_numeric(edited["_row_id"], errors="coerce").notna()].copy()
+            edited_new = edited[pd.to_numeric(edited["_row_id"], errors="coerce").isna()].copy()
+            save_data = data.copy()
+            for _, row in edited_existing.iterrows():
+                row_id = int(row["_row_id"])
+                if row_id in save_data.index:
+                    save_data.loc[row_id, SKU_COST_HEADERS] = row[SKU_COST_HEADERS].to_list()
+            if not edited_new.empty:
+                save_data = pd.concat(
+                    [save_data, edited_new[SKU_COST_HEADERS]],
+                    ignore_index=True,
+                )
+            backup_path = save_sku_cost_frame(save_data)
+            st.success(
+                "保存成功。"
+                + (f" 已备份旧文件：{backup_path.name}" if backup_path else "")
+            )
+            st.rerun()
+    with action_cols[1]:
+        st.download_button(
+            "下载成本表",
+            data=sku_cost_download_bytes(data),
+            file_name="sku_cost.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+        )
 
 
 @st.cache_data(show_spinner=False)
@@ -354,10 +531,15 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
 
 with st.sidebar:
     st.header("店铺与数据")
+    page_mode = st.radio("页面", ["日报看板", "SKU成本维护"])
     sidebar_link("财务上传报表", upload_url())
     sidebar_link("投产计算器", roi_url())
     sidebar_link("达人管理", koc_url())
     sidebar_link("AI 生图", ai_image_url())
+
+if page_mode == "SKU成本维护":
+    render_sku_cost_manager()
+    st.stop()
 
 try:
     sources = find_store_workbooks()
