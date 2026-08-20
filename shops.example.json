@@ -1,0 +1,14 @@
+{
+  "shops": [
+    {
+      "name": "示例店铺A",
+      "enabled": true,
+      "port": 9222,
+      "profile": "shop_9222_demo_a",
+      "sycm_url": "https://sycm.taobao.com/cc/item_rank?dateRange=YYYY-MM-DD%7CYYYY-MM-DD&dateType=today",
+      "site_url": "https://one.alimama.com/index.html#!/manage/onesite",
+      "search_url": "https://one.alimama.com/index.html#!/manage/search?mx_bizCode=onebpSearch&bizCode=onebpSearch&tab=adgroup&startTime=YYYY-MM-DD&endTime=YYYY-MM-DD",
+      "smart_site_url": "https://one.alimama.com/index.html#!/manage/onesite?mx_bizCode=onebpSite&bizCode=onebpSite&tab=campaignShopGroup&startTime=YYYY-MM-DD&endTime=YYYY-MM-DD"
+    }
+  ]
+}
