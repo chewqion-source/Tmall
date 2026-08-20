@@ -197,6 +197,73 @@ def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
     st.dataframe(styled_latest, width="stretch", hide_index=True)
 
 
+def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
+    latest_date = all_daily["date"].max()
+    latest_rows = all_daily[all_daily["date"] == latest_date].copy()
+    if latest_rows.empty:
+        return
+
+    product_daily = (
+        latest_rows.groupby(["store", "product_id"], as_index=False)
+        .agg(
+            销量=("sales_qty", "sum"),
+            订单量=("order_count", "sum"),
+            实时盈亏=("profit", "sum"),
+        )
+    )
+
+    st.subheader(f"{latest_date:%Y-%m-%d} 店铺商品盈利 / 亏损 TOP5")
+
+    for store in sorted(product_daily["store"].unique()):
+        store_products = product_daily[product_daily["store"] == store].copy()
+        if store_products.empty:
+            continue
+
+        profit_top = (
+            store_products[store_products["实时盈亏"] > 0]
+            .sort_values("实时盈亏", ascending=False)
+            .head(5)
+            .rename(columns={"product_id": "商品ID"})
+        )
+        loss_top = (
+            store_products[store_products["实时盈亏"] < 0]
+            .sort_values("实时盈亏", ascending=True)
+            .head(5)
+            .rename(columns={"product_id": "商品ID"})
+        )
+
+        st.markdown(f"**{store}**")
+        left_col, right_col = st.columns(2)
+
+        with left_col:
+            st.caption("实时 TOP5 盈利产品")
+            if profit_top.empty:
+                st.info("暂无盈利产品")
+            else:
+                styled_profit = profit_top.style.map(color_profit, subset=["实时盈亏"]).format(
+                    {
+                        "销量": "{:,.0f}",
+                        "订单量": "{:,.0f}",
+                        "实时盈亏": "{:+,.2f}",
+                    }
+                )
+                st.dataframe(styled_profit, width="stretch", hide_index=True)
+
+        with right_col:
+            st.caption("实时 TOP5 亏损产品")
+            if loss_top.empty:
+                st.info("暂无亏损产品")
+            else:
+                styled_loss = loss_top.style.map(color_profit, subset=["实时盈亏"]).format(
+                    {
+                        "销量": "{:,.0f}",
+                        "订单量": "{:,.0f}",
+                        "实时盈亏": "{:+,.2f}",
+                    }
+                )
+                st.dataframe(styled_loss, width="stretch", hide_index=True)
+
+
 with st.sidebar:
     st.header("店铺与数据")
     sidebar_link("财务上传报表", upload_url())
@@ -229,6 +296,7 @@ with refresh_col:
         st.rerun()
 
 render_latest_store_snapshot(all_daily)
+render_latest_product_extremes(all_daily)
 
 filter_cols = st.columns([1.2, 1.4, 1])
 with filter_cols[0]:
