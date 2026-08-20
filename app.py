@@ -151,6 +151,13 @@ def render_profit_trend(data: pd.DataFrame, height: int = 360) -> None:
     st.plotly_chart(profit_fig, width="stretch")
 
 
+def _product_axis_label(product_id: object) -> str:
+    text = str(product_id)
+    if len(text) <= 12:
+        return text
+    return f"{text[:6]}...{text[-4:]}"
+
+
 def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
     latest_date = all_daily["date"].max()
     latest_rows = all_daily[all_daily["date"] == latest_date]
@@ -166,35 +173,48 @@ def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
         .sort_values("实时盈亏", ascending=False, ignore_index=True)
     )
 
-    total_row = pd.DataFrame(
-        [
-            {
-                "店铺": "合计",
-                "销量": latest_overview["销量"].sum(),
-                "订单量": latest_overview["订单量"].sum(),
-                "实时盈亏": latest_overview["实时盈亏"].sum(),
-                "商品数": latest_overview["商品数"].sum(),
-            }
-        ]
-    )
-    latest_overview = pd.concat([latest_overview, total_row], ignore_index=True)
-
     st.subheader(f"{latest_date:%Y-%m-%d} 店铺实时盈亏汇总")
     metric_cols = st.columns(4)
     metric_cols[0].metric("店铺数", f"{len(latest_rows['store'].unique()):,.0f}")
-    metric_cols[1].metric("总销量", f"{latest_overview.iloc[-1]['销量']:,.0f}")
-    metric_cols[2].metric("总订单量", f"{latest_overview.iloc[-1]['订单量']:,.0f}")
-    metric_cols[3].metric("实时盈亏", f"¥{latest_overview.iloc[-1]['实时盈亏']:,.2f}")
+    metric_cols[1].metric("总销量", f"{latest_overview['销量'].sum():,.0f}")
+    metric_cols[2].metric("总订单量", f"{latest_overview['订单量'].sum():,.0f}")
+    metric_cols[3].metric("实时盈亏", f"¥{latest_overview['实时盈亏'].sum():,.2f}")
 
-    styled_latest = latest_overview.style.map(color_profit, subset=["实时盈亏"]).format(
-        {
-            "销量": "{:,.0f}",
-            "订单量": "{:,.0f}",
-            "实时盈亏": "{:+,.2f}",
-            "商品数": "{:,.0f}",
-        }
+    colors = ["#16a34a" if value >= 0 else "#dc2626" for value in latest_overview["实时盈亏"]]
+    snapshot_fig = make_subplots(specs=[[{"secondary_y": True}]])
+    snapshot_fig.add_trace(
+        go.Bar(
+            x=latest_overview["店铺"],
+            y=latest_overview["实时盈亏"],
+            name="实时盈亏",
+            marker_color=colors,
+            text=[f"¥{value:,.0f}" for value in latest_overview["实时盈亏"]],
+            textposition="outside",
+            hovertemplate="店铺 %{x}<br>实时盈亏 ¥%{y:,.2f}<extra></extra>",
+        ),
+        secondary_y=False,
     )
-    st.dataframe(styled_latest, width="stretch", hide_index=True)
+    snapshot_fig.add_trace(
+        go.Scatter(
+            x=latest_overview["店铺"],
+            y=latest_overview["销量"],
+            name="销量",
+            mode="lines+markers",
+            line=dict(color="#2563eb", width=3),
+            marker=dict(size=8),
+            hovertemplate="销量 %{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+    snapshot_fig.update_yaxes(title_text="实时盈亏", secondary_y=False)
+    snapshot_fig.update_yaxes(title_text="销量", secondary_y=True, rangemode="tozero")
+    snapshot_fig.update_layout(
+        height=340,
+        margin=dict(l=6, r=6, t=12, b=8),
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    st.plotly_chart(snapshot_fig, width="stretch")
 
 
 def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
@@ -240,28 +260,63 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
             if profit_top.empty:
                 st.info("暂无盈利产品")
             else:
-                styled_profit = profit_top.style.map(color_profit, subset=["实时盈亏"]).format(
-                    {
-                        "销量": "{:,.0f}",
-                        "订单量": "{:,.0f}",
-                        "实时盈亏": "{:+,.2f}",
-                    }
+                profit_chart = profit_top.sort_values("实时盈亏", ascending=True)
+                profit_fig = go.Figure(
+                    go.Bar(
+                        x=profit_chart["实时盈亏"],
+                        y=profit_chart["商品ID"].map(_product_axis_label),
+                        orientation="h",
+                        marker_color="#16a34a",
+                        text=[f"¥{value:,.0f}" for value in profit_chart["实时盈亏"]],
+                        textposition="outside",
+                        customdata=profit_chart[["商品ID", "销量", "订单量"]],
+                        hovertemplate=(
+                            "商品ID %{customdata[0]}<br>"
+                            "销量 %{customdata[1]:,.0f}<br>"
+                            "订单量 %{customdata[2]:,.0f}<br>"
+                            "实时盈亏 ¥%{x:,.2f}<extra></extra>"
+                        ),
+                    )
                 )
-                st.dataframe(styled_profit, width="stretch", hide_index=True)
+                profit_fig.update_layout(
+                    height=260,
+                    margin=dict(l=8, r=42, t=8, b=8),
+                    xaxis_title="实时盈亏",
+                    yaxis_title="",
+                )
+                st.plotly_chart(profit_fig, width="stretch")
 
         with right_col:
             st.caption("实时 TOP5 亏损产品")
             if loss_top.empty:
                 st.info("暂无亏损产品")
             else:
-                styled_loss = loss_top.style.map(color_profit, subset=["实时盈亏"]).format(
-                    {
-                        "销量": "{:,.0f}",
-                        "订单量": "{:,.0f}",
-                        "实时盈亏": "{:+,.2f}",
-                    }
+                loss_chart = loss_top.sort_values("实时盈亏", ascending=False)
+                loss_fig = go.Figure(
+                    go.Bar(
+                        x=loss_chart["实时盈亏"],
+                        y=loss_chart["商品ID"].map(_product_axis_label),
+                        orientation="h",
+                        marker_color="#dc2626",
+                        text=[f"¥{value:,.0f}" for value in loss_chart["实时盈亏"]],
+                        textposition="outside",
+                        customdata=loss_chart[["商品ID", "销量", "订单量"]],
+                        hovertemplate=(
+                            "商品ID %{customdata[0]}<br>"
+                            "销量 %{customdata[1]:,.0f}<br>"
+                            "订单量 %{customdata[2]:,.0f}<br>"
+                            "实时盈亏 ¥%{x:,.2f}<extra></extra>"
+                        ),
+                    )
                 )
-                st.dataframe(styled_loss, width="stretch", hide_index=True)
+                loss_fig.add_vline(x=0, line_color="#64748b", line_width=1)
+                loss_fig.update_layout(
+                    height=260,
+                    margin=dict(l=8, r=42, t=8, b=8),
+                    xaxis_title="实时盈亏",
+                    yaxis_title="",
+                )
+                st.plotly_chart(loss_fig, width="stretch")
 
 
 with st.sidebar:
