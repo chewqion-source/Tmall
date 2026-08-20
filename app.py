@@ -162,92 +162,35 @@ def _format_money(value: float) -> str:
     return f"¥{value:,.2f}"
 
 
+def _progress_ratio(value: float, max_abs: float) -> float:
+    if max_abs <= 0:
+        return 0.0
+    return min(max(abs(float(value)) / max_abs, 0.04), 1.0)
+
+
 def _render_rank_bars(
     data: pd.DataFrame,
     value_col: str,
     title: str,
-    color: str,
     empty_text: str,
 ) -> None:
-    st.caption(title)
+    st.markdown(f"**{title}**")
     if data.empty:
         st.info(empty_text)
         return
 
     max_abs = max(abs(float(value)) for value in data[value_col]) or 1
-    rows: list[str] = []
     for index, row in data.reset_index(drop=True).iterrows():
         value = float(row[value_col])
-        width = max(abs(value) / max_abs * 100, 8)
         product_id = str(row["商品ID"])
         short_id = _product_axis_label(product_id)
-        rows.append(
-            f"""
-            <div class="rank-row">
-                <div class="rank-head">
-                    <span class="rank-no">{index + 1}</span>
-                    <span class="rank-id" title="{product_id}">{short_id}</span>
-                    <strong>{_format_money(value)}</strong>
-                </div>
-                <div class="rank-track">
-                    <div class="rank-fill" style="width:{width:.1f}%; background:{color};"></div>
-                </div>
-                <div class="rank-meta">销量 {float(row["销量"]):,.0f} ｜ 订单 {float(row["订单量"]):,.0f}</div>
-            </div>
-            """
-        )
-
-    st.markdown(
-        """
-        <style>
-        .rank-row { margin: 0 0 14px 0; }
-        .rank-head {
-            display: grid;
-            grid-template-columns: 28px 1fr auto;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            color: #0f172a;
-        }
-        .rank-no {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 22px;
-            height: 22px;
-            border-radius: 50%;
-            background: #eef2ff;
-            color: #3730a3;
-            font-weight: 700;
-        }
-        .rank-id {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            color: #334155;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        }
-        .rank-track {
-            height: 8px;
-            border-radius: 999px;
-            background: #e2e8f0;
-            overflow: hidden;
-            margin: 6px 0 4px 36px;
-        }
-        .rank-fill {
-            height: 100%;
-            border-radius: 999px;
-        }
-        .rank-meta {
-            margin-left: 36px;
-            font-size: 12px;
-            color: #64748b;
-        }
-        </style>
-        """
-        + "\n".join(rows),
-        unsafe_allow_html=True,
-    )
+        label_col, value_col_ui = st.columns([1.35, 1], vertical_alignment="center")
+        with label_col:
+            st.write(f"{index + 1}. `{short_id}`")
+            st.caption(f"完整ID {product_id} ｜ 销量 {float(row['销量']):,.0f} ｜ 订单 {float(row['订单量']):,.0f}")
+        with value_col_ui:
+            st.metric("实时盈亏", _format_money(value))
+        st.progress(_progress_ratio(value, max_abs))
 
 
 def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
@@ -273,78 +216,17 @@ def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
     metric_cols[3].metric("实时盈亏", f"¥{latest_overview['实时盈亏'].sum():,.2f}")
 
     max_profit = max(abs(float(value)) for value in latest_overview["实时盈亏"]) or 1
-    cards = []
-    for _, row in latest_overview.iterrows():
+    store_cols = st.columns(len(latest_overview))
+    for column, (_, row) in zip(store_cols, latest_overview.iterrows()):
         profit = float(row["实时盈亏"])
-        width = max(abs(profit) / max_profit * 100, 8)
-        color = "#16a34a" if profit >= 0 else "#dc2626"
-        cards.append(
-            f"""
-            <div class="store-card">
-                <div class="store-title">{row["店铺"]}</div>
-                <div class="store-profit" style="color:{color};">{_format_money(profit)}</div>
-                <div class="store-track"><div class="store-fill" style="width:{width:.1f}%; background:{color};"></div></div>
-                <div class="store-meta">
-                    <span>销量 {float(row["销量"]):,.0f}</span>
-                    <span>订单 {float(row["订单量"]):,.0f}</span>
-                    <span>商品 {float(row["商品数"]):,.0f}</span>
-                </div>
-            </div>
-            """
-        )
-
-    st.markdown(
-        """
-        <style>
-        .store-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 12px;
-            margin: 4px 0 18px 0;
-        }
-        .store-card {
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            padding: 14px 16px;
-            background: #ffffff;
-        }
-        .store-title {
-            font-size: 14px;
-            color: #475569;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .store-profit {
-            font-size: 26px;
-            line-height: 1.1;
-            font-weight: 800;
-            margin-bottom: 12px;
-        }
-        .store-track {
-            height: 9px;
-            border-radius: 999px;
-            background: #e2e8f0;
-            overflow: hidden;
-            margin-bottom: 10px;
-        }
-        .store-fill {
-            height: 100%;
-            border-radius: 999px;
-        }
-        .store-meta {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-            font-size: 12px;
-            color: #64748b;
-        }
-        </style>
-        <div class="store-grid">
-        """
-        + "\n".join(cards)
-        + "</div>",
-        unsafe_allow_html=True,
-    )
+        with column:
+            st.metric(str(row["店铺"]), _format_money(profit))
+            st.progress(_progress_ratio(profit, max_profit))
+            st.caption(
+                f"销量 {float(row['销量']):,.0f} ｜ "
+                f"订单 {float(row['订单量']):,.0f} ｜ "
+                f"商品 {float(row['商品数']):,.0f}"
+            )
 
 
 def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
@@ -391,7 +273,6 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
                     profit_top,
                     "实时盈亏",
                     "实时 TOP5 盈利产品",
-                    "#16a34a",
                     "暂无盈利产品",
                 )
             with right_col:
@@ -399,7 +280,6 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
                     loss_top,
                     "实时盈亏",
                     "实时 TOP5 亏损产品",
-                    "#dc2626",
                     "暂无亏损产品",
                 )
 
