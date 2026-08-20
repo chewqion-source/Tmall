@@ -151,6 +151,52 @@ def render_profit_trend(data: pd.DataFrame, height: int = 360) -> None:
     st.plotly_chart(profit_fig, width="stretch")
 
 
+def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
+    latest_date = all_daily["date"].max()
+    latest_rows = all_daily[all_daily["date"] == latest_date]
+    latest_overview = (
+        latest_rows.groupby("store", as_index=False)
+        .agg(
+            销量=("sales_qty", "sum"),
+            订单量=("order_count", "sum"),
+            实时盈亏=("profit", "sum"),
+            商品数=("product_id", "nunique"),
+        )
+        .rename(columns={"store": "店铺"})
+        .sort_values("实时盈亏", ascending=False, ignore_index=True)
+    )
+
+    total_row = pd.DataFrame(
+        [
+            {
+                "店铺": "合计",
+                "销量": latest_overview["销量"].sum(),
+                "订单量": latest_overview["订单量"].sum(),
+                "实时盈亏": latest_overview["实时盈亏"].sum(),
+                "商品数": latest_overview["商品数"].sum(),
+            }
+        ]
+    )
+    latest_overview = pd.concat([latest_overview, total_row], ignore_index=True)
+
+    st.subheader(f"{latest_date:%Y-%m-%d} 店铺实时盈亏汇总")
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("店铺数", f"{len(latest_rows['store'].unique()):,.0f}")
+    metric_cols[1].metric("总销量", f"{latest_overview.iloc[-1]['销量']:,.0f}")
+    metric_cols[2].metric("总订单量", f"{latest_overview.iloc[-1]['订单量']:,.0f}")
+    metric_cols[3].metric("实时盈亏", f"¥{latest_overview.iloc[-1]['实时盈亏']:,.2f}")
+
+    styled_latest = latest_overview.style.map(color_profit, subset=["实时盈亏"]).format(
+        {
+            "销量": "{:,.0f}",
+            "订单量": "{:,.0f}",
+            "实时盈亏": "{:+,.2f}",
+            "商品数": "{:,.0f}",
+        }
+    )
+    st.dataframe(styled_latest, width="stretch", hide_index=True)
+
+
 with st.sidebar:
     st.header("店铺与数据")
     sidebar_link("财务上传报表", upload_url())
@@ -181,6 +227,8 @@ with refresh_col:
     if st.button("刷新数据", type="primary", width="stretch"):
         st.cache_data.clear()
         st.rerun()
+
+render_latest_store_snapshot(all_daily)
 
 filter_cols = st.columns([1.2, 1.4, 1])
 with filter_cols[0]:
