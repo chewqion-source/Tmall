@@ -728,6 +728,94 @@ def get_report_sum(
         return 0.0
 
 
+def get_report_weighted_average(
+    record,
+    field,
+    weight_field="charge"
+):
+
+    report_list = get_report_list(
+        record
+    )
+
+    weighted_total = 0.0
+    weight_total = 0.0
+    values = []
+
+    for report in report_list:
+
+        if not isinstance(report, dict):
+            continue
+
+        try:
+
+            value = report.get(
+                field
+            )
+
+            if value is None:
+                continue
+
+            value = float(
+                value
+            )
+
+            weight = float(
+                report.get(
+                    weight_field,
+                    0
+                )
+                or
+                0
+            )
+
+            if weight > 0:
+                weighted_total += (
+                    value
+                    *
+                    weight
+                )
+                weight_total += weight
+
+            values.append(
+                value
+            )
+
+        except Exception:
+            pass
+
+    if weight_total > 0:
+        return (
+            weighted_total
+            /
+            weight_total
+        )
+
+    if values:
+        return (
+            sum(values)
+            /
+            len(values)
+        )
+
+    try:
+
+        direct_value = record.get(
+            field
+        )
+
+        if direct_value is None:
+            return 0.0
+
+        return float(
+            direct_value
+        )
+
+    except Exception:
+
+        return 0.0
+
+
 def make_report_fingerprint(
     record
 ):
@@ -1011,6 +1099,12 @@ def parse_playroad_records(
                     "click"
                 ),
 
+            f"{source_name}ROI":
+                get_report_weighted_average(
+                    record,
+                    "roi"
+                ),
+
             "_report_count":
                 len(report_list),
 
@@ -1113,6 +1207,7 @@ def empty_playroad_df(
             f"{source_name}消耗",
             f"{source_name}成交金额",
             f"{source_name}点击",
+            f"{source_name}ROI",
         ]
     )
 
@@ -1412,6 +1507,7 @@ def aggregate_playroad_rows(
         f"{source_name}消耗",
         f"{source_name}成交金额",
         f"{source_name}点击",
+        f"{source_name}ROI",
     ]
 
     for col in numeric_cols:
@@ -1422,6 +1518,15 @@ def aggregate_playroad_rows(
         raw_df[col] = clean_numeric(
             raw_df[col]
         )
+
+    weighted_roi_col = (
+        f"_{source_name}ROI加权值"
+    )
+    raw_df[weighted_roi_col] = (
+        raw_df[f"{source_name}ROI"]
+        *
+        raw_df[f"{source_name}消耗"]
+    )
 
     # --------------------------------------------------------
     # 同一个 materialId
@@ -1446,10 +1551,33 @@ def aggregate_playroad_rows(
             f"{source_name}点击":
                 "sum",
 
+            weighted_roi_col:
+                "sum",
+
             f"{source_name}商品名称":
                 "first",
 
         })
+    )
+
+    roi_weight = clean_numeric(
+        agg[f"{source_name}消耗"]
+    )
+
+    agg[f"{source_name}ROI"] = np.where(
+        roi_weight > 0,
+        clean_numeric(
+            agg[weighted_roi_col]
+        )
+        /
+        roi_weight,
+        0.0
+    )
+
+    agg = agg.drop(
+        columns=[
+            weighted_roi_col
+        ]
     )
 
     return agg
@@ -2309,10 +2437,12 @@ def merge_and_calculate(
         "全站推广消耗",
         "全站推广成交金额",
         "全站推广点击",
+        "全站推广ROI",
 
         "关键词推广消耗",
         "关键词推广成交金额",
         "关键词推广点击",
+        "关键词推广ROI",
     ]
 
     for col in numeric_cols:
@@ -2332,6 +2462,24 @@ def merge_and_calculate(
         result["全站推广消耗"]
         +
         result["关键词推广消耗"]
+    )
+
+    roi_weighted_total = (
+        result["全站推广ROI"]
+        *
+        result["全站推广消耗"]
+        +
+        result["关键词推广ROI"]
+        *
+        result["关键词推广消耗"]
+    )
+
+    result["推广后台ROI"] = np.where(
+        result["总推广消耗"] > 0,
+        roi_weighted_total
+        /
+        result["总推广消耗"],
+        0.0
     )
 
     # --------------------------------------------------------
@@ -2566,6 +2714,7 @@ def merge_and_calculate(
         "实时盈亏",
 
         "实际净投产",
+        "推广后台ROI",
     ]
 
     for col in money_cols:
@@ -2617,6 +2766,7 @@ def merge_and_calculate(
         "实时盈亏",
         "盈亏状态",
         "实际净投产",
+        "推广后台ROI",
 
         "支付买家数",
         "商品访客",
@@ -2625,9 +2775,11 @@ def merge_and_calculate(
 
         "全站推广成交金额",
         "全站推广点击",
+        "全站推广ROI",
 
         "关键词推广成交金额",
         "关键词推广点击",
+        "关键词推广ROI",
     ]
 
     available_cols = [

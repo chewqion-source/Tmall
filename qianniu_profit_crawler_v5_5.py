@@ -1170,6 +1170,21 @@ def integrate_shop(
             .round(2)
         )
 
+    if (
+        "推广后台ROI"
+        in df.columns
+    ):
+        df[
+            "推广后台ROI"
+        ] = (
+            clean_numeric(
+                df[
+                    "推广后台ROI"
+                ]
+            )
+            .round(2)
+        )
+
     # 主字段排序
     preferred = [
         "店铺",
@@ -1216,6 +1231,9 @@ def integrate_shop(
         "利润率",
         "盈亏状态",
         "实际净投产",
+        "推广后台ROI",
+        "全站推广ROI",
+        "关键词推广ROI",
     ]
 
     first_cols = [
@@ -1339,6 +1357,130 @@ def integrate_shop(
 # 重建三店总表
 # ============================================================
 
+def _snapshot_number(row, column, default=0.0):
+    try:
+        return float(
+            clean_numeric(
+                pd.Series(
+                    [
+                        row.get(
+                            column,
+                            default
+                        )
+                    ]
+                )
+            ).iloc[0]
+        )
+    except Exception:
+        return float(
+            default
+        )
+
+
+def _snapshot_optional_number(row, column):
+    if column not in row.index:
+        return None
+
+    try:
+        value = clean_numeric(
+            pd.Series(
+                [
+                    row.get(
+                        column
+                    )
+                ]
+            )
+        ).iloc[0]
+    except Exception:
+        return None
+
+    if pd.isna(value):
+        return None
+
+    return float(
+        value
+    )
+
+
+def write_realtime_snapshot(df):
+    snapshot_dir = (
+        DATA_ROOT
+        /
+        "realtime_snapshot"
+    )
+    snapshot_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    generated_at = datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    records = []
+
+    for _, row in df.iterrows():
+        captured_at = str(
+            row.get(
+                "抓取时间",
+                generated_at
+            )
+            or
+            generated_at
+        )
+        date_text = captured_at[:10]
+
+        records.append(
+            {
+                "store": str(row.get("店铺", "")),
+                "captured_at": captured_at,
+                "product_id": normalize_id(row.get("商品ID", "")),
+                "product_name": str(row.get("商品名称", "")),
+                "sales_qty": _snapshot_number(row, "支付件数"),
+                "pay_amount": _snapshot_number(row, "支付金额"),
+                "site_ad_cost": _snapshot_number(row, "全站推广消耗"),
+                "keyword_ad_cost": _snapshot_number(row, "关键词推广消耗"),
+                "ad_cost": _snapshot_number(row, "总推广消耗"),
+                "promotion_roi": _snapshot_optional_number(row, "推广后台ROI"),
+                "site_promotion_roi": _snapshot_optional_number(row, "全站推广ROI"),
+                "keyword_promotion_roi": _snapshot_optional_number(row, "关键词推广ROI"),
+                "order_count": _snapshot_number(row, "SKU订单数"),
+                "sku_count": _snapshot_number(row, "SKU成交件数"),
+                "merch_cost": _snapshot_number(row, "货品成本"),
+                "freight_cost": _snapshot_number(row, "快递成本"),
+                "platform_fee": _snapshot_number(row, "平台费用"),
+                "tax_fee": _snapshot_number(row, "税费"),
+                "refund_amount": _snapshot_number(row, "退款金额"),
+                "gross_profit": _snapshot_number(row, "销售毛利"),
+                "profit": _snapshot_number(row, "实时盈亏"),
+                "unmatched_sku_rows": _snapshot_number(row, "SKU成本未匹配行数"),
+                "date": date_text,
+            }
+        )
+
+    payload = {
+        "generated_at": generated_at,
+        "source": Path(__file__).name,
+        "records": records,
+    }
+
+    latest = (
+        snapshot_dir
+        /
+        "latest.json"
+    )
+    latest.write_text(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2
+        ),
+        encoding="utf-8"
+    )
+
+    return latest
+
+
 def rebuild_all_shops(
     frames
 ):
@@ -1389,6 +1531,14 @@ def rebuild_all_shops(
         history,
         index=False,
         encoding="utf-8-sig"
+    )
+
+    snapshot = write_realtime_snapshot(
+        df
+    )
+
+    print(
+        f"网站实时快照：{snapshot}"
     )
 
     return df
