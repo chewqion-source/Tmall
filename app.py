@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from datetime import datetime
 from io import BytesIO
+import json
 import mimetypes
 import os
 from pathlib import Path
@@ -42,6 +43,10 @@ SKU_COST_PATH = Path(
         "SKU_COST_FILE",
         Path(__file__).resolve().parent / "data" / "sku_cost.xlsx",
     )
+)
+DATA_DIR = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
+REALTIME_SNAPSHOT_PATH = Path(
+    os.environ.get("TMALL_REALTIME_FILE", DATA_DIR / "realtime" / "latest.json")
 )
 
 
@@ -129,6 +134,26 @@ def sku_cost_download_bytes(data: pd.DataFrame) -> bytes:
     output = BytesIO()
     data.to_excel(output, index=False, sheet_name="SKU成本配置")
     return output.getvalue()
+
+
+def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.DataFrame, str | None]:
+    if not path.exists():
+        return pd.DataFrame(), None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    records = payload.get("records", [])
+    if not records:
+        return pd.DataFrame(), payload.get("generated_at")
+    data = pd.DataFrame(records)
+    required = {"store", "date", "product_id", "sales_qty", "order_count", "profit"}
+    if not required.issubset(data.columns):
+        return pd.DataFrame(), payload.get("generated_at")
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    for column in ["sales_qty", "order_count", "profit"]:
+        data[column] = pd.to_numeric(data[column], errors="coerce").fillna(0)
+    data["product_id"] = data["product_id"].astype(str)
+    if "sku_count" not in data.columns:
+        data["sku_count"] = 0
+    return data.dropna(subset=["date"]), payload.get("generated_at")
 
 
 def render_sku_cost_manager() -> None:
@@ -564,8 +589,16 @@ with refresh_col:
         st.cache_data.clear()
         st.rerun()
 
-render_latest_store_snapshot(all_daily)
-render_latest_product_extremes(all_daily)
+realtime_daily, realtime_generated_at = load_realtime_snapshot()
+if not realtime_daily.empty:
+    if realtime_generated_at:
+        st.caption(f"顶部实时模块更新时间：{realtime_generated_at}。核心趋势仍以财务导入日报为准。")
+    render_latest_store_snapshot(realtime_daily)
+    render_latest_product_extremes(realtime_daily)
+else:
+    st.info("暂无实时抓取快照，顶部暂以财务日报最新日期展示。")
+    render_latest_store_snapshot(all_daily)
+    render_latest_product_extremes(all_daily)
 
 filter_cols = st.columns([1.2, 1.4, 1])
 with filter_cols[0]:
