@@ -148,7 +148,18 @@ def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.Data
     if not required.issubset(data.columns):
         return pd.DataFrame(), payload.get("generated_at")
     data["date"] = pd.to_datetime(data["date"], errors="coerce")
-    for column in ["sales_qty", "order_count", "profit"]:
+    numeric_columns = [
+        "sales_qty",
+        "order_count",
+        "profit",
+        "pay_amount",
+        "ad_cost",
+        "gross_profit",
+        "refund_amount",
+    ]
+    for column in numeric_columns:
+        if column not in data.columns:
+            data[column] = 0
         data[column] = pd.to_numeric(data[column], errors="coerce").fillna(0)
     data["product_id"] = data["product_id"].astype(str)
     if "sku_count" not in data.columns:
@@ -363,6 +374,12 @@ def _format_money(value: float) -> str:
     return f"¥{value:,.2f}"
 
 
+def _format_roi(value: object) -> str:
+    if pd.isna(value):
+        return "-"
+    return f"{float(value):.2f}"
+
+
 def _render_product_rank_chart(
     data: pd.DataFrame,
     value_col: str,
@@ -370,6 +387,7 @@ def _render_product_rank_chart(
     empty_text: str,
     color: str,
     height: int | None = None,
+    show_roi: bool = False,
 ) -> None:
     if data.empty:
         st.caption(empty_text)
@@ -385,29 +403,66 @@ def _render_product_rank_chart(
         + "  "
         + chart_data["短商品ID"]
     )
+    if show_roi:
+        chart_data["ROI标签"] = chart_data.apply(
+            lambda row: (
+                f"{_format_money(float(row[value_col]))} | "
+                f"ROI {_format_roi(row.get('实时推广ROI'))} | "
+                f"保本 {_format_roi(row.get('推荐保本ROI'))}"
+            ),
+            axis=1,
+        )
+        text_values = chart_data["ROI标签"].tolist()
+        customdata_columns = [
+            "商品ID",
+            "销量",
+            "订单量",
+            value_col,
+            "推广消耗",
+            "支付金额",
+            "实时推广ROI",
+            "推荐保本ROI",
+        ]
+        customdata = chart_data[customdata_columns]
+        hovertemplate = (
+            "商品 %{customdata[0]}<br>"
+            "销量 %{customdata[1]:,.0f}<br>"
+            "订单 %{customdata[2]:,.0f}<br>"
+            "实时盈亏 %{customdata[3]:,.2f}<br>"
+            "推广消耗 ¥%{customdata[4]:,.2f}<br>"
+            "支付金额 ¥%{customdata[5]:,.2f}<br>"
+            "实时推广ROI %{customdata[6]:.2f}<br>"
+            "推荐保本ROI %{customdata[7]:.2f}<extra></extra>"
+        )
+    else:
+        text_values = [_format_money(float(value)) for value in chart_data[value_col]]
+        customdata = chart_data[["商品ID", "销量", "订单量", value_col]]
+        hovertemplate = (
+            "商品 %{customdata[0]}<br>"
+            "销量 %{customdata[1]:,.0f}<br>"
+            "订单 %{customdata[2]:,.0f}<br>"
+            "实时盈亏 %{customdata[3]:,.2f}<extra></extra>"
+        )
     fig = go.Figure(
         go.Bar(
             x=chart_data["显示盈亏"],
             y=chart_data["标签"],
             orientation="h",
             marker_color=color,
-            text=[_format_money(float(value)) for value in chart_data[value_col]],
+            text=text_values,
             textposition="outside",
             cliponaxis=False,
-            customdata=chart_data[["商品ID", "销量", "订单量", value_col]],
-            hovertemplate=(
-                "商品 %{customdata[0]}<br>"
-                "销量 %{customdata[1]:,.0f}<br>"
-                "订单 %{customdata[2]:,.0f}<br>"
-                "实时盈亏 %{customdata[3]:,.2f}<extra></extra>"
-            ),
+            customdata=customdata,
+            hovertemplate=hovertemplate,
         )
     )
     max_value = float(chart_data["显示盈亏"].max()) if not chart_data.empty else 0.0
+    right_margin = 210 if show_roi else 76
+    range_padding = 1.58 if show_roi else 1.22
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)),
         height=height or min(450, 96 + 28 * len(chart_data)),
-        margin=dict(l=6, r=76, t=34, b=8),
+        margin=dict(l=6, r=right_margin, t=34, b=8),
         xaxis_title="",
         yaxis_title="",
         showlegend=False,
@@ -417,7 +472,7 @@ def _render_product_rank_chart(
         showgrid=True,
         gridcolor="#e5e7eb",
         zeroline=False,
-        range=[0, max_value * 1.22 if max_value > 0 else 1],
+        range=[0, max_value * range_padding if max_value > 0 else 1],
     )
     fig.update_yaxes(tickfont=dict(size=10))
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
@@ -498,11 +553,68 @@ def _build_product_rank_rows(product_daily: pd.DataFrame) -> pd.DataFrame:
 
     if not rank_rows:
         return pd.DataFrame(
-            columns=["店铺", "类型", "排名", "商品ID", "销量", "订单量", "实时盈亏"]
+            columns=[
+                "店铺",
+                "类型",
+                "排名",
+                "商品ID",
+                "销量",
+                "订单量",
+                "实时盈亏",
+                "推广消耗",
+                "支付金额",
+                "实时推广ROI",
+                "推荐保本ROI",
+            ]
         )
-    return pd.concat(rank_rows, ignore_index=True)[
-        ["店铺", "类型", "排名", "商品ID", "销量", "订单量", "实时盈亏"]
+    rank = pd.concat(rank_rows, ignore_index=True)
+    for column in ["推广消耗", "支付金额", "实时推广ROI", "推荐保本ROI"]:
+        if column not in rank.columns:
+            rank[column] = pd.NA
+    return rank[
+        [
+            "店铺",
+            "类型",
+            "排名",
+            "商品ID",
+            "销量",
+            "订单量",
+            "实时盈亏",
+            "推广消耗",
+            "支付金额",
+            "实时推广ROI",
+            "推荐保本ROI",
+        ]
     ]
+
+
+def _build_realtime_product_daily(rows: pd.DataFrame) -> pd.DataFrame:
+    enriched = rows.copy()
+    for column in ["pay_amount", "ad_cost", "gross_profit", "refund_amount"]:
+        if column not in enriched.columns:
+            enriched[column] = 0
+        enriched[column] = pd.to_numeric(enriched[column], errors="coerce").fillna(0)
+
+    product_daily = (
+        enriched.groupby(["store", "product_id"], as_index=False)
+        .agg(
+            销量=("sales_qty", "sum"),
+            订单量=("order_count", "sum"),
+            实时盈亏=("profit", "sum"),
+            支付金额=("pay_amount", "sum"),
+            推广消耗=("ad_cost", "sum"),
+            推广前毛利=("gross_profit", "sum"),
+            退款金额=("refund_amount", "sum"),
+        )
+    )
+    product_daily["实时推广ROI"] = product_daily["支付金额"].where(
+        product_daily["推广消耗"] > 0
+    ) / product_daily["推广消耗"].where(product_daily["推广消耗"] > 0)
+    break_even_ad = product_daily["推广前毛利"] - product_daily["退款金额"]
+    product_daily["推荐保本ROI"] = product_daily["支付金额"].where(
+        break_even_ad > 0
+    ) / break_even_ad.where(break_even_ad > 0)
+    return product_daily
 
 
 def render_latest_store_snapshot(all_daily: pd.DataFrame) -> None:
@@ -536,14 +648,7 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
     if latest_rows.empty:
         return
 
-    product_daily = (
-        latest_rows.groupby(["store", "product_id"], as_index=False)
-        .agg(
-            销量=("sales_qty", "sum"),
-            订单量=("order_count", "sum"),
-            实时盈亏=("profit", "sum"),
-        )
-    )
+    product_daily = _build_realtime_product_daily(latest_rows)
 
     st.subheader(f"{latest_date:%Y-%m-%d} 店铺商品盈利 / 亏损 TOP5")
     compact_rank = _build_product_rank_rows(product_daily)
@@ -567,6 +672,7 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
             "亏损产品 TOP5",
             "暂无亏损产品",
             "#dc2626",
+            show_roi=True,
         )
 
 
@@ -612,14 +718,7 @@ def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
         if selected_rank_store != "全部店铺":
             rank_source = latest_rows[latest_rows["store"] == selected_rank_store]
 
-        product_daily = (
-            rank_source.groupby(["store", "product_id"], as_index=False)
-            .agg(
-                销量=("sales_qty", "sum"),
-                订单量=("order_count", "sum"),
-                实时盈亏=("profit", "sum"),
-            )
-        )
+        product_daily = _build_realtime_product_daily(rank_source)
         compact_rank = _build_product_rank_rows(product_daily)
         if compact_rank.empty:
             st.info("暂无商品盈利 / 亏损数据")
@@ -642,6 +741,7 @@ def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
                 "暂无亏损产品",
                 "#dc2626",
                 height=330,
+                show_roi=True,
             )
 
 
