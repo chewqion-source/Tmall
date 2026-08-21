@@ -6,6 +6,7 @@ $LockFile = Join-Path $BaseDir "logs\scheduled_realtime.lock"
 $Python = "D:\python\python.exe"
 $RunScript = Join-Path $BaseDir "qianniu_profit_crawler_v5_5.py"
 $UploadScript = Join-Path $BaseDir "upload_realtime_snapshot.py"
+$SyncSkuScript = Join-Path $BaseDir "sync_sku_cost.py"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $LogFile = Join-Path $LogDir ("realtime_" + (Get-Date -Format "yyyyMMdd") + ".log")
@@ -22,12 +23,16 @@ try {
 
     "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run started ==========" | Tee-Object -FilePath $LogFile -Append
 
+    & $Python $SyncSkuScript pull 2>&1 | Tee-Object -FilePath $LogFile -Append
+
     & $Python $RunScript 2>&1 | Tee-Object -FilePath $LogFile -Append
     $runCode = $LASTEXITCODE
     if ($runCode -ne 0) {
         "crawler failed, exit code: $runCode" | Tee-Object -FilePath $LogFile -Append
         exit $runCode
     }
+
+    & $Python $SyncSkuScript push 2>&1 | Tee-Object -FilePath $LogFile -Append
 
     & $Python $UploadScript 2>&1 | Tee-Object -FilePath $LogFile -Append
     $uploadCode = $LASTEXITCODE
