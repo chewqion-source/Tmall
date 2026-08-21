@@ -18,4 +18,4 @@ Start-Process -FilePath "wscript.exe" -ArgumentList "`"$Target`"" -WindowStyle H
 
 Write-Host "Installed and started local realtime scheduler."
 Write-Host "Startup item: $Target"
-Write-Host "Schedule: daily 09:00-23:59, every 30 minutes."
+Write-Host "Schedule: daily 09:00-23:59, every 2 hours."

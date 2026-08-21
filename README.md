@@ -92,7 +92,7 @@ python qianniu_profit_crawler_v5_5.py
 本项目已提供本地定时抓取脚本，适合使用本机已登录的三店浏览器。
 
 - 安装/启动后台调度：运行 `install_startup_scheduler.ps1`
-- 定时频率：每天 09:00-23:59，每 30 分钟一次
+- 定时频率：每天 09:00-23:59，每 2 小时一次
 - 手动立即跑一次：运行 `run_scheduled_realtime.bat`
 - 抓取日志：`logs/scheduled/realtime_YYYYMMDD.log`
 - 调度日志：`logs/scheduled/scheduler_loop.log`
