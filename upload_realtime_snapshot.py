@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 import json
+import logging
 import sys
+import time
 
 import paramiko
+
+
+logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -13,6 +18,34 @@ SSH_KEY_FILE = BASE_DIR / ".ssh_tmp" / "tmall_codex_temp_ed25519"
 REMOTE_HOST = "150.158.133.102"
 REMOTE_USER = "ubuntu"
 REMOTE_FILE = "/opt/tmall-dashboard/data/realtime/latest.json"
+
+
+def connect_with_retry(max_attempts: int = 5):
+    key = paramiko.Ed25519Key.from_private_key_file(str(SSH_KEY_FILE))
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            print(f"SSH connect attempt {attempt}/{max_attempts}...")
+            client.connect(
+                hostname=REMOTE_HOST,
+                username=REMOTE_USER,
+                pkey=key,
+                timeout=30,
+                banner_timeout=60,
+                auth_timeout=60,
+                look_for_keys=False,
+                allow_agent=False,
+            )
+            return client
+        except Exception as exc:
+            last_error = exc
+            client.close()
+            print(f"SSH connect attempt {attempt}/{max_attempts} failed: {exc}")
+            if attempt < max_attempts:
+                time.sleep(min(10 * attempt, 60))
+    raise last_error
 
 
 def main() -> int:
@@ -31,10 +64,7 @@ def main() -> int:
         print(f"SSH Key 不存在：{SSH_KEY_FILE}")
         return 1
 
-    key = paramiko.Ed25519Key.from_private_key_file(str(SSH_KEY_FILE))
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(hostname=REMOTE_HOST, username=REMOTE_USER, pkey=key, timeout=20)
+    client = connect_with_retry()
 
     stdin, stdout, stderr = client.exec_command("mkdir -p /opt/tmall-dashboard/data/realtime")
     rc = stdout.channel.recv_exit_status()

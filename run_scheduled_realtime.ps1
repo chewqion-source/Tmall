@@ -12,6 +12,48 @@ $FeishuScript = Join-Path $BaseDir "notify_feishu.py"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $LogFile = Join-Path $LogDir ("realtime_" + (Get-Date -Format "yyyyMMdd") + ".log")
 
+function Write-RunLog {
+    param([string]$Message)
+    $Message | Tee-Object -FilePath $LogFile -Append
+}
+
+function Invoke-PythonStepWithRetry {
+    param(
+        [string]$Label,
+        [string[]]$Arguments,
+        [int]$MaxAttempts = 3
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        Write-RunLog "[$Label] attempt $attempt/$MaxAttempts started"
+        try {
+            & $Python @Arguments 2>&1 | Tee-Object -FilePath $LogFile -Append
+            $code = $LASTEXITCODE
+        }
+        catch {
+            $code = 1
+            Write-RunLog "[$Label] attempt $attempt/$MaxAttempts exception: $($_.Exception.Message)"
+        }
+
+        if ($code -eq 0) {
+            if ($attempt -gt 1) {
+                Write-RunLog "[$Label] retry succeeded on attempt $attempt/$MaxAttempts"
+            }
+            return 0
+        }
+
+        Write-RunLog "[$Label] attempt $attempt/$MaxAttempts failed, exit code: $code"
+        if ($attempt -lt $MaxAttempts) {
+            $delaySeconds = 15 * $attempt
+            Write-RunLog "[$Label] retrying after $delaySeconds seconds..."
+            Start-Sleep -Seconds $delaySeconds
+        }
+    }
+
+    Write-RunLog "[$Label] failed after $MaxAttempts attempts"
+    return 1
+}
+
 $lockStream = $null
 try {
     $lockStream = [System.IO.File]::Open($LockFile, "OpenOrCreate", "ReadWrite", "None")
@@ -22,36 +64,43 @@ try {
 
     Set-Location $BaseDir
 
-    "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run started ==========" | Tee-Object -FilePath $LogFile -Append
+    Write-RunLog "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run started =========="
 
-    & $Python $SyncSkuScript pull 2>&1 | Tee-Object -FilePath $LogFile -Append
+    $syncPullCode = Invoke-PythonStepWithRetry -Label "sync sku cost pull" -Arguments @($SyncSkuScript, "pull")
+    if ($syncPullCode -ne 0) {
+        Write-RunLog "sync sku cost pull failed after retries"
+        exit $syncPullCode
+    }
 
     & $Python $RunScript 2>&1 | Tee-Object -FilePath $LogFile -Append
     $runCode = $LASTEXITCODE
     if ($runCode -ne 0) {
-        "crawler failed, exit code: $runCode" | Tee-Object -FilePath $LogFile -Append
+        Write-RunLog "crawler failed, exit code: $runCode"
         exit $runCode
     }
 
-    & $Python $SyncSkuScript push 2>&1 | Tee-Object -FilePath $LogFile -Append
+    $syncPushCode = Invoke-PythonStepWithRetry -Label "sync sku cost push" -Arguments @($SyncSkuScript, "push")
+    if ($syncPushCode -ne 0) {
+        Write-RunLog "sync sku cost push failed after retries"
+        exit $syncPushCode
+    }
 
-    & $Python $UploadScript 2>&1 | Tee-Object -FilePath $LogFile -Append
-    $uploadCode = $LASTEXITCODE
+    $uploadCode = Invoke-PythonStepWithRetry -Label "upload realtime snapshot" -Arguments @($UploadScript)
     if ($uploadCode -ne 0) {
-        "upload failed, exit code: $uploadCode" | Tee-Object -FilePath $LogFile -Append
+        Write-RunLog "upload failed after retries, exit code: $uploadCode"
         exit $uploadCode
     }
 
     & $Python $FeishuScript 2>&1 | Tee-Object -FilePath $LogFile -Append
 
-    "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run finished ==========" | Tee-Object -FilePath $LogFile -Append
+    Write-RunLog "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run finished =========="
 }
 catch [System.IO.IOException] {
-    "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') previous run still active, skipped ==========" | Tee-Object -FilePath $LogFile -Append
+    Write-RunLog "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') previous run still active, skipped =========="
     exit 0
 }
 catch {
-    "task error: $($_.Exception.Message)" | Tee-Object -FilePath $LogFile -Append
+    Write-RunLog "task error: $($_.Exception.Message)"
     exit 1
 }
 finally {

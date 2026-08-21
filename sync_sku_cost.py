@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
 from pathlib import Path
+import logging
 import sys
+import time
 
 import pandas as pd
 import paramiko
+
+
+logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -73,10 +78,30 @@ def _save_sku_cost(data: pd.DataFrame, path: Path) -> None:
 
 def _connect():
     key = paramiko.Ed25519Key.from_private_key_file(str(SSH_KEY_FILE))
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(hostname=REMOTE_HOST, username=REMOTE_USER, pkey=key, timeout=20)
-    return client
+    last_error = None
+    for attempt in range(1, 6):
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            print(f"SSH connect attempt {attempt}/5...")
+            client.connect(
+                hostname=REMOTE_HOST,
+                username=REMOTE_USER,
+                pkey=key,
+                timeout=30,
+                banner_timeout=60,
+                auth_timeout=60,
+                look_for_keys=False,
+                allow_agent=False,
+            )
+            return client
+        except Exception as exc:
+            last_error = exc
+            client.close()
+            print(f"SSH connect attempt {attempt}/5 failed: {exc}")
+            if attempt < 5:
+                time.sleep(min(10 * attempt, 60))
+    raise last_error
 
 
 def merge_remote_to_local() -> int:
