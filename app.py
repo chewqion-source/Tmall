@@ -664,6 +664,7 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
             "盈利产品 TOP5",
             "暂无盈利产品",
             "#16a34a",
+            show_roi=True,
         )
     with loss_col:
         _render_product_rank_chart(
@@ -732,6 +733,7 @@ def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
                 "暂无盈利产品",
                 "#16a34a",
                 height=330,
+                show_roi=True,
             )
         with loss_col:
             _render_product_rank_chart(
