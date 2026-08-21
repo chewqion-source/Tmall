@@ -185,11 +185,14 @@ def render_sku_cost_manager() -> None:
 
     data = load_sku_cost_frame()
     missing_cost = data["单件货价"].isna() | data["快递费"].isna()
-    metric_cols = st.columns(4)
+    missing_code = data["商家编码"].fillna("").astype(str).str.strip().isin(["", "缺失"])
+    missing_code_products = data.loc[missing_code, "商品ID"].replace("", pd.NA).dropna().nunique()
+    metric_cols = st.columns(5)
     metric_cols[0].metric("SKU 行数", f"{len(data):,.0f}")
     metric_cols[1].metric("已填成本", f"{len(data) - int(missing_cost.sum()):,.0f}")
     metric_cols[2].metric("待补成本", f"{int(missing_cost.sum()):,.0f}")
-    metric_cols[3].metric("涉及店铺", f"{data['店铺'].replace('', pd.NA).dropna().nunique():,.0f}")
+    metric_cols[3].metric("缺失商家编码商品", f"{missing_code_products:,.0f}")
+    metric_cols[4].metric("涉及店铺", f"{data['店铺'].replace('', pd.NA).dropna().nunique():,.0f}")
 
     filter_cols = st.columns([1, 1.2, 1])
     stores = sorted(store for store in data["店铺"].dropna().unique() if str(store).strip())
@@ -213,6 +216,37 @@ def render_sku_cost_manager() -> None:
         ]
     if only_missing:
         view = view[view["单件货价"].isna() | view["快递费"].isna()]
+
+    batch_cols = st.columns([1, 1, 1, 1.2])
+    with batch_cols[0]:
+        batch_column = st.selectbox("批量字段", ["快递费", "单件货价"])
+    with batch_cols[1]:
+        batch_value = st.number_input("批量金额", min_value=0.0, value=3.7, step=0.1, format="%.2f")
+    with batch_cols[2]:
+        batch_scope = st.selectbox("填写范围", ["只填空值", "覆盖当前筛选"])
+    with batch_cols[3]:
+        st.write("")
+        st.write("")
+        if st.button("批量填写当前筛选", type="secondary", width="stretch"):
+            target_ids = view["_row_id"].dropna().astype(int).tolist()
+            if not target_ids:
+                st.warning("当前筛选没有可填写的 SKU。")
+            else:
+                save_data = data.copy()
+                target_mask = save_data.index.isin(target_ids)
+                if batch_scope == "只填空值":
+                    target_mask = target_mask & save_data[batch_column].isna()
+                changed = int(target_mask.sum())
+                if changed == 0:
+                    st.info("当前筛选里没有需要填写的空值。")
+                else:
+                    save_data.loc[target_mask, batch_column] = round(float(batch_value), 2)
+                    backup_path = save_sku_cost_frame(save_data)
+                    st.success(
+                        f"已批量填写 {changed} 行 {batch_column}。"
+                        + (f" 旧文件备份：{backup_path.name}" if backup_path else "")
+                    )
+                    st.rerun()
 
     st.caption("可直接修改单件货价、快递费，也可以在最后新增行。保存后会写回线上 sku_cost.xlsx。")
     edited = st.data_editor(
