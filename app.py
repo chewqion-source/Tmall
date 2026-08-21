@@ -369,6 +369,7 @@ def _render_product_rank_chart(
     title: str,
     empty_text: str,
     color: str,
+    height: int | None = None,
 ) -> None:
     if data.empty:
         st.caption(empty_text)
@@ -403,7 +404,7 @@ def _render_product_rank_chart(
     fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)),
-        height=min(450, 96 + 28 * len(chart_data)),
+        height=height or min(450, 96 + 28 * len(chart_data)),
         margin=dict(l=6, r=36, t=34, b=8),
         xaxis_title="",
         yaxis_title="",
@@ -415,7 +416,7 @@ def _render_product_rank_chart(
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
-def _render_store_profit_chart(latest_overview: pd.DataFrame) -> None:
+def _render_store_profit_chart(latest_overview: pd.DataFrame, height: int = 220) -> None:
     chart_data = latest_overview.sort_values("实时盈亏", ascending=True).copy()
     colors = ["#16a34a" if value >= 0 else "#dc2626" for value in chart_data["实时盈亏"]]
     fig = go.Figure(
@@ -437,7 +438,7 @@ def _render_store_profit_chart(latest_overview: pd.DataFrame) -> None:
     )
     fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
     fig.update_layout(
-        height=220,
+        height=height,
         margin=dict(l=6, r=42, t=10, b=8),
         xaxis_title="",
         yaxis_title="",
@@ -553,6 +554,71 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
         )
 
 
+def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
+    latest_date = all_daily["date"].max()
+    latest_rows = all_daily[all_daily["date"] == latest_date].copy()
+    if latest_rows.empty:
+        return
+
+    latest_overview = (
+        latest_rows.groupby("store", as_index=False)
+        .agg(
+            销量=("sales_qty", "sum"),
+            订单量=("order_count", "sum"),
+            实时盈亏=("profit", "sum"),
+            商品数=("product_id", "nunique"),
+        )
+        .rename(columns={"store": "店铺"})
+        .sort_values("实时盈亏", ascending=False, ignore_index=True)
+    )
+    product_daily = (
+        latest_rows.groupby(["store", "product_id"], as_index=False)
+        .agg(
+            销量=("sales_qty", "sum"),
+            订单量=("order_count", "sum"),
+            实时盈亏=("profit", "sum"),
+        )
+    )
+    compact_rank = _build_product_rank_rows(product_daily)
+
+    st.subheader(f"{latest_date:%Y-%m-%d} 实时盈亏总览")
+    summary_col, top_col = st.columns([0.42, 0.58], gap="large")
+
+    with summary_col:
+        metric_cols = st.columns(2)
+        metric_cols[0].metric("店铺数", f"{len(latest_rows['store'].unique()):,.0f}")
+        metric_cols[1].metric("总销量", f"{latest_overview['销量'].sum():,.0f}")
+        metric_cols = st.columns(2)
+        metric_cols[0].metric("总订单量", f"{latest_overview['订单量'].sum():,.0f}")
+        metric_cols[1].metric("实时盈亏", f"¥{latest_overview['实时盈亏'].sum():,.2f}")
+        _render_store_profit_chart(latest_overview, height=260)
+
+    with top_col:
+        st.markdown("**店铺商品盈利 / 亏损 TOP5**")
+        if compact_rank.empty:
+            st.info("暂无商品盈利 / 亏损数据")
+            return
+        profit_col, loss_col = st.columns(2)
+        with profit_col:
+            _render_product_rank_chart(
+                compact_rank[compact_rank["类型"] == "盈利"],
+                "实时盈亏",
+                "盈利 TOP5",
+                "暂无盈利产品",
+                "#16a34a",
+                height=330,
+            )
+        with loss_col:
+            _render_product_rank_chart(
+                compact_rank[compact_rank["类型"] == "亏损"],
+                "实时盈亏",
+                "亏损 TOP5",
+                "暂无亏损产品",
+                "#dc2626",
+                height=330,
+            )
+
+
 with st.sidebar:
     st.header("店铺与数据")
     page_mode = st.radio("页面", ["日报看板", "SKU成本维护"])
@@ -593,12 +659,10 @@ realtime_daily, realtime_generated_at = load_realtime_snapshot()
 if not realtime_daily.empty:
     if realtime_generated_at:
         st.caption(f"顶部实时模块更新时间：{realtime_generated_at}。核心趋势仍以财务导入日报为准。")
-    render_latest_store_snapshot(realtime_daily)
-    render_latest_product_extremes(realtime_daily)
+    render_realtime_overview_row(realtime_daily)
 else:
     st.info("暂无实时抓取快照，顶部暂以财务日报最新日期展示。")
-    render_latest_store_snapshot(all_daily)
-    render_latest_product_extremes(all_daily)
+    render_realtime_overview_row(all_daily)
 
 filter_cols = st.columns([1.2, 1.4, 1])
 with filter_cols[0]:
