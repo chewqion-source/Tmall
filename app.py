@@ -161,6 +161,8 @@ def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.Data
         if column not in data.columns:
             data[column] = 0
         data[column] = pd.to_numeric(data[column], errors="coerce").fillna(0)
+    if "promotion_roi" in data.columns:
+        data["promotion_roi"] = pd.to_numeric(data["promotion_roi"], errors="coerce")
     data["product_id"] = data["product_id"].astype(str)
     if "sku_count" not in data.columns:
         data["sku_count"] = 0
@@ -590,10 +592,24 @@ def _build_product_rank_rows(product_daily: pd.DataFrame) -> pd.DataFrame:
 
 def _build_realtime_product_daily(rows: pd.DataFrame) -> pd.DataFrame:
     enriched = rows.copy()
+    has_promotion_roi = "promotion_roi" in enriched.columns
     for column in ["pay_amount", "ad_cost", "gross_profit", "refund_amount"]:
         if column not in enriched.columns:
             enriched[column] = 0
         enriched[column] = pd.to_numeric(enriched[column], errors="coerce").fillna(0)
+    if has_promotion_roi:
+        enriched["promotion_roi"] = pd.to_numeric(
+            enriched["promotion_roi"],
+            errors="coerce",
+        )
+    else:
+        enriched["promotion_roi"] = pd.NA
+    enriched["_promotion_roi_available"] = enriched["promotion_roi"].notna()
+    enriched["_promotion_roi_weighted"] = (
+        enriched["promotion_roi"]
+        *
+        enriched["ad_cost"]
+    )
 
     product_daily = (
         enriched.groupby(["store", "product_id"], as_index=False)
@@ -603,17 +619,21 @@ def _build_realtime_product_daily(rows: pd.DataFrame) -> pd.DataFrame:
             实时盈亏=("profit", "sum"),
             支付金额=("pay_amount", "sum"),
             推广消耗=("ad_cost", "sum"),
+            推广ROI加权值=("_promotion_roi_weighted", "sum"),
+            推广ROI有效数=("_promotion_roi_available", "sum"),
             推广前毛利=("gross_profit", "sum"),
             退款金额=("refund_amount", "sum"),
         )
     )
-    product_daily["实时推广ROI"] = product_daily["支付金额"].where(
-        product_daily["推广消耗"] > 0
+    product_daily["实时推广ROI"] = product_daily["推广ROI加权值"].where(
+        (product_daily["推广消耗"] > 0)
+        & (product_daily["推广ROI有效数"] > 0)
     ) / product_daily["推广消耗"].where(product_daily["推广消耗"] > 0)
     break_even_ad = product_daily["推广前毛利"] - product_daily["退款金额"]
     product_daily["推荐保本ROI"] = product_daily["支付金额"].where(
         break_even_ad > 0
     ) / break_even_ad.where(break_even_ad > 0)
+    product_daily = product_daily.drop(columns=["推广ROI加权值", "推广ROI有效数"])
     return product_daily
 
 
