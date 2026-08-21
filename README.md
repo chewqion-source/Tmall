@@ -99,6 +99,16 @@ python qianniu_profit_crawler_v5_5.py
 
 后台调度会防止重复运行：如果上一轮还没结束，下一轮会自动跳过。抓取完成后会自动上传 `data/realtime_snapshot/latest.json` 到网站服务器。
 
+### 飞书通知
+
+定时抓取支持完成后自动发送飞书消息。复制示例配置并填入飞书自定义机器人的 webhook：
+
+```powershell
+Copy-Item config/feishu_webhook.example.json config/feishu_webhook.json
+```
+
+如果机器人开启了签名校验，同时填写 `secret`；没有开启则留空。`config/feishu_webhook.json` 已加入忽略列表，不会提交到 git。
+
 ## 常见问题
 
 ### 端口检查失败

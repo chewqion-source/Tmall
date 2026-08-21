@@ -23,6 +23,7 @@ logs/
 # Real shop/account/cost configuration
 shops.json
 config.json
+config/feishu_webhook.json
 cost_config.csv
 config/sku_cost.xlsx
 config/backups/

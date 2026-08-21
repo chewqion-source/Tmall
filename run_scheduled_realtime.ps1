@@ -7,6 +7,7 @@ $Python = "D:\python\python.exe"
 $RunScript = Join-Path $BaseDir "qianniu_profit_crawler_v5_5.py"
 $UploadScript = Join-Path $BaseDir "upload_realtime_snapshot.py"
 $SyncSkuScript = Join-Path $BaseDir "sync_sku_cost.py"
+$FeishuScript = Join-Path $BaseDir "notify_feishu.py"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $LogFile = Join-Path $LogDir ("realtime_" + (Get-Date -Format "yyyyMMdd") + ".log")
@@ -40,6 +41,8 @@ try {
         "upload failed, exit code: $uploadCode" | Tee-Object -FilePath $LogFile -Append
         exit $uploadCode
     }
+
+    & $Python $FeishuScript 2>&1 | Tee-Object -FilePath $LogFile -Append
 
     "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run finished ==========" | Tee-Object -FilePath $LogFile -Append
 }
