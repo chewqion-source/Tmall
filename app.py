@@ -376,6 +376,7 @@ def _render_product_rank_chart(
         return
 
     chart_data = data.iloc[::-1].copy()
+    chart_data["显示盈亏"] = chart_data[value_col].abs()
     chart_data["短商品ID"] = chart_data["商品ID"].map(_product_axis_label)
     chart_data["标签"] = (
         chart_data["店铺"].astype(str)
@@ -386,32 +387,38 @@ def _render_product_rank_chart(
     )
     fig = go.Figure(
         go.Bar(
-            x=chart_data[value_col],
+            x=chart_data["显示盈亏"],
             y=chart_data["标签"],
             orientation="h",
             marker_color=color,
             text=[_format_money(float(value)) for value in chart_data[value_col]],
             textposition="outside",
-            customdata=chart_data[["商品ID", "销量", "订单量"]],
+            cliponaxis=False,
+            customdata=chart_data[["商品ID", "销量", "订单量", value_col]],
             hovertemplate=(
                 "商品 %{customdata[0]}<br>"
                 "销量 %{customdata[1]:,.0f}<br>"
                 "订单 %{customdata[2]:,.0f}<br>"
-                "实时盈亏 %{x:,.2f}<extra></extra>"
+                "实时盈亏 %{customdata[3]:,.2f}<extra></extra>"
             ),
         )
     )
-    fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
+    max_value = float(chart_data["显示盈亏"].max()) if not chart_data.empty else 0.0
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)),
         height=height or min(450, 96 + 28 * len(chart_data)),
-        margin=dict(l=6, r=36, t=34, b=8),
+        margin=dict(l=6, r=76, t=34, b=8),
         xaxis_title="",
         yaxis_title="",
         showlegend=False,
         font=dict(size=11),
     )
-    fig.update_xaxes(showgrid=True, gridcolor="#e5e7eb", zeroline=False)
+    fig.update_xaxes(
+        showgrid=True,
+        gridcolor="#e5e7eb",
+        zeroline=False,
+        range=[0, max_value * 1.22 if max_value > 0 else 1],
+    )
     fig.update_yaxes(tickfont=dict(size=10))
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
@@ -419,6 +426,9 @@ def _render_product_rank_chart(
 def _render_store_profit_chart(latest_overview: pd.DataFrame, height: int = 220) -> None:
     chart_data = latest_overview.sort_values("实时盈亏", ascending=True).copy()
     colors = ["#16a34a" if value >= 0 else "#dc2626" for value in chart_data["实时盈亏"]]
+    min_value = float(chart_data["实时盈亏"].min()) if not chart_data.empty else 0.0
+    max_value = float(chart_data["实时盈亏"].max()) if not chart_data.empty else 0.0
+    span = max(max_value - min_value, abs(max_value), abs(min_value), 1.0)
     fig = go.Figure(
         go.Bar(
             x=chart_data["实时盈亏"],
@@ -427,6 +437,7 @@ def _render_store_profit_chart(latest_overview: pd.DataFrame, height: int = 220)
             marker_color=colors,
             text=[_format_money(float(value)) for value in chart_data["实时盈亏"]],
             textposition="outside",
+            cliponaxis=False,
             customdata=chart_data[["销量", "订单量", "商品数"]],
             hovertemplate=(
                 "销量 %{customdata[0]:,.0f}<br>"
@@ -439,13 +450,18 @@ def _render_store_profit_chart(latest_overview: pd.DataFrame, height: int = 220)
     fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
     fig.update_layout(
         height=height,
-        margin=dict(l=6, r=42, t=10, b=8),
+        margin=dict(l=6, r=96, t=10, b=8),
         xaxis_title="",
         yaxis_title="",
         showlegend=False,
         font=dict(size=12),
     )
-    fig.update_xaxes(showgrid=True, gridcolor="#e5e7eb", zeroline=False)
+    fig.update_xaxes(
+        showgrid=True,
+        gridcolor="#e5e7eb",
+        zeroline=False,
+        range=[min(0.0, min_value) - span * 0.08, max(0.0, max_value) + span * 0.24],
+    )
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
@@ -571,16 +587,6 @@ def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
         .rename(columns={"store": "店铺"})
         .sort_values("实时盈亏", ascending=False, ignore_index=True)
     )
-    product_daily = (
-        latest_rows.groupby(["store", "product_id"], as_index=False)
-        .agg(
-            销量=("sales_qty", "sum"),
-            订单量=("order_count", "sum"),
-            实时盈亏=("profit", "sum"),
-        )
-    )
-    compact_rank = _build_product_rank_rows(product_daily)
-
     st.subheader(f"{latest_date:%Y-%m-%d} 实时盈亏总览")
     summary_col, top_col = st.columns([0.42, 0.58], gap="large")
 
@@ -595,6 +601,26 @@ def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
 
     with top_col:
         st.markdown("**店铺商品盈利 / 亏损 TOP5**")
+        store_options = ["全部店铺"] + sorted(latest_rows["store"].dropna().unique().tolist())
+        selected_rank_store = st.selectbox(
+            "选择店铺",
+            store_options,
+            key=f"realtime_rank_store_{latest_date:%Y%m%d}",
+            label_visibility="collapsed",
+        )
+        rank_source = latest_rows
+        if selected_rank_store != "全部店铺":
+            rank_source = latest_rows[latest_rows["store"] == selected_rank_store]
+
+        product_daily = (
+            rank_source.groupby(["store", "product_id"], as_index=False)
+            .agg(
+                销量=("sales_qty", "sum"),
+                订单量=("order_count", "sum"),
+                实时盈亏=("profit", "sum"),
+            )
+        )
+        compact_rank = _build_product_rank_rows(product_daily)
         if compact_rank.empty:
             st.info("暂无商品盈利 / 亏损数据")
             return
