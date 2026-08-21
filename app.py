@@ -416,40 +416,6 @@ def _format_roi(value: object) -> str:
     return f"{float(value):.2f}"
 
 
-def _rank_detail_frame(data: pd.DataFrame) -> pd.DataFrame:
-    if data.empty:
-        return pd.DataFrame(columns=["排名", "店铺", "商品ID", "实时盈亏", "当前ROI", "保本ROI"])
-
-    detail = data.copy()
-    detail["商品ID"] = detail["商品ID"].astype(str)
-    detail["实时盈亏"] = detail["实时盈亏"].map(lambda value: _format_money(float(value)))
-    detail["当前ROI"] = detail["实时推广ROI"].map(_format_roi)
-    detail["保本ROI"] = detail["推荐保本ROI"].map(_format_roi)
-    return detail[["排名", "店铺", "商品ID", "实时盈亏", "当前ROI", "保本ROI"]]
-
-
-def _render_rank_detail_table(data: pd.DataFrame, title: str, empty_text: str, height: int = 220) -> None:
-    st.markdown(f"**{title} ID明细**")
-    detail = _rank_detail_frame(data)
-    if detail.empty:
-        st.caption(empty_text)
-        return
-    st.dataframe(
-        detail,
-        hide_index=True,
-        width="stretch",
-        height=height,
-        column_config={
-            "商品ID": st.column_config.TextColumn("商品ID", width="medium"),
-            "实时盈亏": st.column_config.TextColumn("实时盈亏", width="small"),
-            "当前ROI": st.column_config.TextColumn("当前ROI", width="small"),
-            "保本ROI": st.column_config.TextColumn("保本ROI", width="small"),
-        },
-    )
-    with st.expander("复制商品ID"):
-        st.code("\n".join(detail["商品ID"].astype(str).tolist()), language="text")
-
-
 def _render_product_rank_chart(
     data: pd.DataFrame,
     value_col: str,
@@ -746,27 +712,23 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
 
     profit_col, loss_col = st.columns(2)
     with profit_col:
-        profit_rank = compact_rank[compact_rank["类型"] == "盈利"]
         _render_product_rank_chart(
-            profit_rank,
+            compact_rank[compact_rank["类型"] == "盈利"],
             "实时盈亏",
             "盈利产品 TOP5",
             "暂无盈利产品",
             "#16a34a",
             show_roi=True,
         )
-        _render_rank_detail_table(profit_rank, "盈利TOP5", "暂无盈利产品")
     with loss_col:
-        loss_rank = compact_rank[compact_rank["类型"] == "亏损"]
         _render_product_rank_chart(
-            loss_rank,
+            compact_rank[compact_rank["类型"] == "亏损"],
             "实时盈亏",
             "亏损产品 TOP5",
             "暂无亏损产品",
             "#dc2626",
             show_roi=True,
         )
-        _render_rank_detail_table(loss_rank, "亏损TOP5", "暂无亏损产品")
 
 
 def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
@@ -816,12 +778,10 @@ def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
         if compact_rank.empty:
             st.info("暂无商品盈利 / 亏损数据")
             return
-        profit_rank = compact_rank[compact_rank["类型"] == "盈利"]
-        loss_rank = compact_rank[compact_rank["类型"] == "亏损"]
         profit_col, loss_col = st.columns(2)
         with profit_col:
             _render_product_rank_chart(
-                profit_rank,
+                compact_rank[compact_rank["类型"] == "盈利"],
                 "实时盈亏",
                 "盈利 TOP5",
                 "暂无盈利产品",
@@ -831,7 +791,7 @@ def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
             )
         with loss_col:
             _render_product_rank_chart(
-                loss_rank,
+                compact_rank[compact_rank["类型"] == "亏损"],
                 "实时盈亏",
                 "亏损 TOP5",
                 "暂无亏损产品",
@@ -839,11 +799,6 @@ def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
                 height=330,
                 show_roi=True,
             )
-        detail_col_a, detail_col_b = st.columns(2)
-        with detail_col_a:
-            _render_rank_detail_table(profit_rank, "盈利TOP5", "暂无盈利产品", height=190)
-        with detail_col_b:
-            _render_rank_detail_table(loss_rank, "亏损TOP5", "暂无亏损产品", height=190)
 
 
 with st.sidebar:
