@@ -45,7 +45,6 @@ SKU_COST_PATH = Path(
 )
 
 
-@st.cache_data(show_spinner="正在读取并聚合四家店铺的 Excel…")
 def load_dashboard_data(
     source_signature: tuple[tuple[str, str, int, int], ...], schema_version: str
 ):
