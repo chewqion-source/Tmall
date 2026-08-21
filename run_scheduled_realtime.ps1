@@ -16,6 +16,7 @@ try {
 
     $env:PYTHONIOENCODING = "utf-8"
     $env:PYTHONUTF8 = "1"
+    $env:TMALL_NO_PAUSE = "1"
 
     Set-Location $BaseDir
 

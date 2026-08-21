@@ -39,6 +39,7 @@ from datetime import datetime
 import asyncio
 import importlib.util
 import json
+import os
 import re
 import sys
 import traceback
@@ -1760,7 +1761,11 @@ if __name__ == "__main__":
         )
         sys.exit(1)
 
-    if sys.stdin.isatty():
+    if (
+        sys.stdin.isatty()
+        and
+        not os.environ.get("TMALL_NO_PAUSE")
+    ):
         input(
             "\n按 Enter 退出..."
         )
