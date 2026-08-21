@@ -867,6 +867,58 @@ def _find_nested_material(record):
     return None, ""
 
 
+def _find_report_owner_material(record):
+    """
+    判断 reportInfoList 真正归属的商品。
+    有些万相台接口会把计划级/整页级 reportInfoList 放在父层，
+    子层再挂多个商品。不能把父层消耗记到第一个商品上。
+    这里只接受：
+    - 当前记录自身或 record["material"] 明确有商品ID；
+    - 只有一个 adgroup 子项的父层记录。
+    """
+
+    if not isinstance(record, dict):
+        return None, ""
+
+    direct_id = normalize_id(
+        record.get("materialId")
+    )
+
+    if direct_id:
+        return (
+            direct_id,
+            str(record.get("materialName", "") or "")
+        )
+
+    material = record.get("material")
+
+    if isinstance(material, dict):
+        mid = normalize_id(
+            material.get("materialId")
+        )
+
+        if mid:
+            return (
+                mid,
+                str(material.get("materialName", "") or "")
+            )
+
+    adgroups = record.get("adgroupList")
+
+    if (
+        isinstance(adgroups, list)
+        and
+        len(adgroups) == 1
+        and
+        isinstance(adgroups[0], dict)
+    ):
+        return _find_report_owner_material(
+            adgroups[0]
+        )
+
+    return None, ""
+
+
 def _find_playroad_report_records(obj):
     """
     优先找到真正承载 reportInfoList 的父级业务记录。
@@ -883,7 +935,7 @@ def _find_playroad_report_records(obj):
             )
 
             if isinstance(report_list, list):
-                mid, name = _find_nested_material(
+                mid, name = _find_report_owner_material(
                     x
                 )
 

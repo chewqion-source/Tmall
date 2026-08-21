@@ -390,6 +390,137 @@ def load_shop_refund_total(shop):
     )
 
 
+def load_shop_refund_by_product(shop):
+    """
+    按退款明细里的商品ID汇总当天退款。
+    退款抓取器明细里保留了原始记录，其中 itemInfo.auctionId 是商品ID。
+    """
+
+    total, rows, _file, status = load_shop_refund_total(
+        shop
+    )
+
+    day = datetime.now().strftime(
+        "%Y%m%d"
+    )
+
+    path = (
+        DATA_ROOT
+        /
+        shop["safe_name"]
+        /
+        f"refund_detail_{day}.csv"
+    )
+
+    empty = pd.DataFrame(
+        columns=[
+            "商品ID",
+            "退款金额",
+        ]
+    )
+
+    if (
+        status != "正常"
+        or
+        total <= 0
+        or
+        not path.exists()
+    ):
+        return empty, total, rows, status, 0.0
+
+    try:
+        detail = pd.read_csv(
+            path,
+            dtype=str,
+            encoding="utf-8-sig"
+        )
+    except Exception:
+        return empty, total, rows, "退款明细读取失败", total
+
+    if detail.empty or "退款金额" not in detail.columns:
+        return empty, total, rows, status, total
+
+    def extract_product_id(row):
+        raw = row.get(
+            "原始记录",
+            ""
+        )
+
+        if isinstance(raw, str) and raw.strip():
+            try:
+                payload = json.loads(
+                    raw
+                )
+
+                item_info = (
+                    payload
+                    .get("disputeBodyVO", {})
+                    .get("itemInfo", {})
+                )
+
+                product_id = normalize_id(
+                    item_info.get("auctionId")
+                )
+
+                if product_id:
+                    return product_id
+
+            except Exception:
+                pass
+
+        return normalize_id(
+            row.get("商品ID")
+        )
+
+    detail["商品ID"] = detail.apply(
+        extract_product_id,
+        axis=1
+    )
+
+    detail["退款金额"] = clean_numeric(
+        detail["退款金额"]
+    )
+
+    matched = detail[
+        detail["商品ID"].astype(str).str.len() > 0
+    ].copy()
+
+    if matched.empty:
+        return empty, total, rows, status, total
+
+    refund_df = (
+        matched
+        .groupby(
+            "商品ID",
+            as_index=False
+        )
+        .agg({
+            "退款金额":
+                "sum",
+        })
+    )
+
+    assigned_total = float(
+        refund_df["退款金额"].sum()
+    )
+
+    unassigned_total = max(
+        0.0,
+        float(total) - assigned_total
+    )
+
+    if unassigned_total < 0.01:
+        unassigned_total = 0.0
+
+    return (
+        refund_df,
+        total,
+        rows,
+        status,
+        unassigned_total
+    )
+
+
 # ============================================================
 # 读取某店 SKU 商品成本汇总
 # ============================================================
@@ -759,25 +890,47 @@ def integrate_shop(
     # --------------------------------------------------------
     # 当天退款成功金额
     # --------------------------------------------------------
-    # 退款抓取器输出的是“订单级”退款汇总，而实时经营表是“商品级”。
-    # 为保证店铺总盈亏绝对准确、又不虚构商品归属：
-    # - 不把同一笔退款重复分摊到多个商品；
-    # - 店铺退款总额只在该店第一行记账一次；
-    # - 因此整店 sum(退款金额) 与退款管理页严格一致。
-    refund_total, refund_rows, refund_file, refund_status = (
-        load_shop_refund_total(shop)
+    # 退款明细带有原始 itemInfo.auctionId，优先按商品ID归属。
+    # 这样单品盈亏不会再被整店退款挤到第一条商品上。
+    refund_by_product, refund_total, refund_rows, refund_status, refund_unassigned = (
+        load_shop_refund_by_product(shop)
     )
 
     df["退款金额"] = 0.0
-    df["退款口径"] = "当天申请时间 + 售后状态=退款成功"
+    df["退款口径"] = "当天申请时间 + 售后状态=退款成功；按退款明细商品ID归属"
     df["退款数据状态"] = refund_status
 
-    if len(df) > 0 and refund_total:
-        df.loc[df.index[0], "退款金额"] = refund_total
+    if not refund_by_product.empty:
+        df = df.merge(
+            refund_by_product.rename(
+                columns={
+                    "退款金额":
+                        "_商品退款金额"
+                }
+            ),
+            on="商品ID",
+            how="left"
+        )
+
+        df["_商品退款金额"] = clean_numeric(
+            df["_商品退款金额"]
+        )
+
+        df["退款金额"] = df["_商品退款金额"]
+
+        df = df.drop(
+            columns=[
+                "_商品退款金额"
+            ]
+        )
 
     print(
         f"   当天退款成功：{refund_rows} 单 / ¥{refund_total:.2f}"
     )
+    if refund_unassigned > 0:
+        print(
+            f"   ⚠ 未能按商品ID归属退款：¥{refund_unassigned:.2f}"
+        )
     if refund_status != "正常" and refund_status != "本轮退款为0":
         print(
             f"   ⚠ 退款数据状态：{refund_status}；本店本轮不扣历史退款"
