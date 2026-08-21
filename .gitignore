@@ -18,12 +18,14 @@ chrome_profiles/
 data/
 logs/
 *.log
+.ssh_tmp/
 
 # Real shop/account/cost configuration
 shops.json
 config.json
 cost_config.csv
 config/sku_cost.xlsx
+config/backups/
 cost_config/*.csv
 
 # Keep example/config directories visible

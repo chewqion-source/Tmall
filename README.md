@@ -87,6 +87,18 @@ python qianniu_profit_crawler_v5_5.py
 - 退款明细：`data/<店铺>/refund_detail_YYYYMMDD.csv`
 - 退款汇总：`data/<店铺>/refund_summary_YYYYMMDD.csv`
 
+## 本地定时抓取
+
+本项目已提供本地定时抓取脚本，适合使用本机已登录的三店浏览器。
+
+- 安装/启动后台调度：运行 `install_startup_scheduler.ps1`
+- 定时频率：每天 09:00-23:59，每 30 分钟一次
+- 手动立即跑一次：运行 `run_scheduled_realtime.bat`
+- 抓取日志：`logs/scheduled/realtime_YYYYMMDD.log`
+- 调度日志：`logs/scheduled/scheduler_loop.log`
+
+后台调度会防止重复运行：如果上一轮还没结束，下一轮会自动跳过。抓取完成后会自动上传 `data/realtime_snapshot/latest.json` 到网站服务器。
+
 ## 常见问题
 
 ### 端口检查失败

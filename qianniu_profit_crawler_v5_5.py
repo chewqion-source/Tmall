@@ -1741,6 +1741,7 @@ if __name__ == "__main__":
         print(
             "\n用户停止程序"
         )
+        sys.exit(130)
 
     except Exception as e:
 
@@ -1757,7 +1758,9 @@ if __name__ == "__main__":
         print(
             traceback.format_exc()
         )
+        sys.exit(1)
 
-    input(
-        "\n按 Enter 退出..."
-    )
+    if sys.stdin.isatty():
+        input(
+            "\n按 Enter 退出..."
+        )
