@@ -91,8 +91,6 @@ def find_store_workbooks(
     project_dir = Path(__file__).resolve().parent
     search_dirs = _workbook_search_dirs(project_dir)
     found: dict[str, Path] = {}
-    missing: list[str] = []
-
     for store, patterns in STORE_FILE_PATTERNS.items():
         explicit = explicit_paths.get(store)
         if explicit:
@@ -114,12 +112,12 @@ def find_store_workbooks(
                 selected = max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
                 break
         if selected is None:
-            missing.append(store)
+            continue
         else:
             found[store] = selected.resolve()
 
-    if missing:
-        raise FileNotFoundError(f"未找到以下店铺日报：{'、'.join(missing)}")
+    if not found:
+        raise FileNotFoundError("未找到任何店铺日报")
     return found
 
 
