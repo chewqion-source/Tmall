@@ -1502,14 +1502,76 @@ def crawl_playroad(
         captured["payload"]
     )
 
-    first_data = (
-        captured["data"]
-    )
-
     # ========================================================
     # 第一页
-    # 必须使用浏览器真实 Response
+    # V4.4：
+    # 捕获到的浏览器 Response 只用于确认接口和请求结构。
+    # 页面自动发出的第一页可能带着旧日期/旧筛选，所以这里必须
+    # 重新 POST 一次已经 patch 成“今天实时”的 payload。
     # ========================================================
+
+    patch_today_realtime(
+        base_payload
+    )
+
+    try:
+        first_payload = copy.deepcopy(
+            base_payload
+        )
+
+        first_payload["offset"] = 0
+
+        first_data = page.evaluate(
+            """
+            async ({url, payload}) => {
+
+                const response =
+                    await fetch(
+                        url,
+                        {
+                            method: "POST",
+                            credentials: "include",
+                            headers: {
+                                "Content-Type":
+                                    "application/json;charset=UTF-8"
+                            },
+                            body:
+                                JSON.stringify(
+                                    payload
+                                )
+                        }
+                    );
+
+                if (!response.ok) {
+
+                    throw new Error(
+                        "HTTP "
+                        +
+                        response.status
+                    );
+                }
+
+                return await response.json();
+            }
+            """,
+            {
+                "url":
+                    request_url,
+
+                "payload":
+                    first_payload,
+            }
+        )
+
+    except Exception as e:
+        print(
+            f"⚠️ [{shop_name}] {source_name} "
+            f"今天实时第1页重放失败：{e}，本模块按 0 处理"
+        )
+
+        return empty_playroad_df(
+            source_name
+        )
 
     all_rows = (
         parse_playroad_records(
@@ -1589,10 +1651,6 @@ def crawl_playroad(
     # ========================================================
     # 分页参数
     # ========================================================
-
-    patch_today_realtime(
-        base_payload
-    )
 
     try:
 
