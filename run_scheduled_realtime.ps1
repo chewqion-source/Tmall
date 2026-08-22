@@ -14,7 +14,8 @@ $LogFile = Join-Path $LogDir ("realtime_" + (Get-Date -Format "yyyyMMdd") + ".lo
 
 function Write-RunLog {
     param([string]$Message)
-    $Message | Tee-Object -FilePath $LogFile -Append
+    Add-Content -Path $LogFile -Value $Message
+    Write-Host $Message
 }
 
 function Invoke-PythonStepWithRetry {
@@ -27,7 +28,10 @@ function Invoke-PythonStepWithRetry {
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         Write-RunLog "[$Label] attempt $attempt/$MaxAttempts started"
         try {
-            & $Python @Arguments 2>&1 | Tee-Object -FilePath $LogFile -Append
+            & $Python @Arguments 2>&1 | ForEach-Object {
+                Add-Content -Path $LogFile -Value $_
+                Write-Host $_
+            }
             $code = $LASTEXITCODE
         }
         catch {
