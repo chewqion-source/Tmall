@@ -25,7 +25,7 @@ from data_loader import (
 from ui_helpers import ai_image_url, koc_url, roi_url, sidebar_link, upload_url
 
 
-st.set_page_config(page_title="天猫四店日报分析", page_icon="📊", layout="wide")
+st.set_page_config(page_title="店铺数据", page_icon="📊", layout="wide")
 
 SKU_COST_HEADERS = [
     "店铺",
@@ -48,6 +48,70 @@ DATA_DIR = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent
 REALTIME_SNAPSHOT_PATH = Path(
     os.environ.get("TMALL_REALTIME_FILE", DATA_DIR / "realtime" / "latest.json")
 )
+
+
+def inject_dashboard_styles() -> None:
+    st.markdown(
+        """
+<style>
+.st-key-refresh_data_icon {
+    display: flex;
+    justify-content: flex-end;
+}
+.st-key-refresh_data_icon button {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    border-radius: 8px;
+    font-size: 22px;
+    line-height: 1;
+}
+.st-key-profit_advice_fab {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 9998;
+}
+.st-key-profit_advice_fab button {
+    width: 58px;
+    height: 58px;
+    min-height: 58px;
+    padding: 0;
+    border-radius: 999px;
+    font-size: 24px;
+    box-shadow: 0 14px 34px rgba(15, 23, 42, .24);
+}
+.st-key-profit_advice_panel {
+    position: fixed;
+    right: 24px;
+    bottom: 92px;
+    width: min(390px, calc(100vw - 32px));
+    max-height: min(560px, calc(100vh - 132px));
+    overflow: auto;
+    z-index: 9997;
+    background: #ffffff;
+    border: 1px solid #dbe3ef;
+    border-radius: 12px;
+    box-shadow: 0 22px 54px rgba(15, 23, 42, .22);
+    padding: 16px 16px 12px;
+}
+.st-key-profit_advice_panel h3 {
+    font-size: 18px;
+    margin: 0 0 8px;
+}
+.st-key-rank_store_all button,
+.st-key-rank_store_0 button,
+.st-key-rank_store_1 button,
+.st-key-rank_store_2 button,
+.st-key-rank_store_3 button,
+.st-key-rank_store_4 button {
+    justify-content: flex-start;
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 def load_dashboard_data(
@@ -151,9 +215,119 @@ def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.Data
     for column in ["sales_qty", "order_count", "profit"]:
         data[column] = pd.to_numeric(data[column], errors="coerce").fillna(0)
     data["product_id"] = data["product_id"].astype(str)
+    if "product_name" not in data.columns:
+        data["product_name"] = ""
     if "sku_count" not in data.columns:
         data["sku_count"] = 0
     return data.dropna(subset=["date"]), payload.get("generated_at")
+
+
+def build_profit_advice(product_id: str, realtime_daily: pd.DataFrame, all_daily: pd.DataFrame) -> tuple[str, bool]:
+    query = str(product_id or "").strip()
+    if not query:
+        return "请输入商品 ID，我会按最新销量、订单量和盈亏给出调整建议。", False
+
+    candidates = pd.DataFrame()
+    source_name = "实时数据"
+    if not realtime_daily.empty:
+        candidates = realtime_daily[realtime_daily["product_id"].astype(str) == query].copy()
+
+    if candidates.empty:
+        source_name = "财务日报"
+        candidates = all_daily[all_daily["product_id"].astype(str) == query].copy()
+        if not candidates.empty:
+            latest_date = candidates["date"].max()
+            candidates = candidates[candidates["date"] == latest_date].copy()
+
+    if candidates.empty:
+        return f"没有找到商品 ID「{query}」。请确认 ID 是否完整，或先上传/刷新该商品的数据。", False
+
+    latest_date = candidates["date"].max()
+    view = candidates[candidates["date"] == latest_date].copy()
+    total_sales = float(view["sales_qty"].sum())
+    total_orders = float(view["order_count"].sum())
+    total_profit = float(view["profit"].sum())
+    stores = "、".join(sorted(view["store"].dropna().astype(str).unique()))
+    product_name = ""
+    if "product_name" in view.columns:
+        names = [str(value).strip() for value in view["product_name"].dropna() if str(value).strip()]
+        product_name = names[0] if names else ""
+
+    per_order_gap = abs(total_profit) / total_orders if total_orders else abs(total_profit)
+    per_sale_gap = abs(total_profit) / total_sales if total_sales else abs(total_profit)
+    lines = [
+        f"商品 ID：{query}",
+        f"店铺：{stores or '未识别'}",
+        f"日期：{latest_date:%Y-%m-%d}（{source_name}）",
+    ]
+    if product_name:
+        lines.append(f"商品：{product_name}")
+    lines.extend(
+        [
+            f"销量：{total_sales:,.0f}，订单量：{total_orders:,.0f}",
+            f"盈亏：¥{total_profit:,.2f}",
+            "",
+        ]
+    )
+
+    if total_profit < 0:
+        lines.extend(
+            [
+                "调整建议：",
+                f"1. 先把单均亏损压回来：当前约每单亏 ¥{per_order_gap:,.2f}，或每件亏 ¥{per_sale_gap:,.2f}。",
+                "2. 检查 SKU 成本、快递费和退款金额，优先处理高销量但亏损的规格。",
+                "3. 推广先收紧低转化计划，保留能带来成交的关键词/人群。",
+                "4. 如果价格有空间，建议按单均亏损上调售价或减少优惠，先把该品拉到不亏。",
+            ]
+        )
+    elif total_profit > 0:
+        lines.extend(
+            [
+                "调整建议：",
+                "1. 这是盈利商品，可以保持库存和发货稳定，避免断货影响利润。",
+                "2. 推广可小幅加预算，建议每次增加 10%-20%，观察盈亏是否同步提升。",
+                "3. 复盘高利润 SKU，把主图、标题和活动资源优先给这类规格。",
+                "4. 如果销量偏低，可以尝试轻微优惠换量，但要守住当前利润率。",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "调整建议：",
+                "1. 当前接近盈亏平衡，先不要大幅加推广。",
+                "2. 优先核对成本、快递费和优惠金额，确认没有漏算。",
+                "3. 可以做小幅价格或优惠测试，看销量是否能带动利润转正。",
+            ]
+        )
+
+    return "\n".join(lines), True
+
+
+def render_profit_advice_floating(realtime_daily: pd.DataFrame, all_daily: pd.DataFrame) -> None:
+    if "profit_advice_open" not in st.session_state:
+        st.session_state["profit_advice_open"] = False
+
+    if st.button("询", key="profit_advice_fab", help="单品盈亏咨询"):
+        st.session_state["profit_advice_open"] = not st.session_state["profit_advice_open"]
+
+    if not st.session_state["profit_advice_open"]:
+        return
+
+    try:
+        panel = st.container(key="profit_advice_panel")
+    except TypeError:
+        panel = st.container()
+
+    with panel:
+        st.markdown("### 单品盈亏咨询")
+        product_id = st.text_input(
+            "输入商品 ID",
+            key="profit_advice_product_id",
+            placeholder="例如 653372334339",
+        )
+        advice, _found = build_profit_advice(product_id, realtime_daily, all_daily)
+        with st.chat_message("assistant"):
+            st.markdown(advice.replace("\n", "  \n"))
 
 
 def render_sku_cost_manager() -> None:
@@ -528,29 +702,52 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
         )
     )
 
-    st.subheader(f"{latest_date:%Y-%m-%d} 店铺商品盈利 / 亏损 TOP5")
+    st.subheader("店铺商品盈亏排行")
+    st.caption(f"数据日期：{latest_date:%Y-%m-%d}")
     compact_rank = _build_product_rank_rows(product_daily)
     if compact_rank.empty:
         st.info("暂无商品盈利 / 亏损数据")
         return
 
-    profit_col, loss_col = st.columns(2)
-    with profit_col:
-        _render_product_rank_chart(
-            compact_rank[compact_rank["类型"] == "盈利"],
-            "实时盈亏",
-            "盈利产品 TOP5",
-            "暂无盈利产品",
-            "#16a34a",
-        )
-    with loss_col:
-        _render_product_rank_chart(
-            compact_rank[compact_rank["类型"] == "亏损"],
-            "实时盈亏",
-            "亏损产品 TOP5",
-            "暂无亏损产品",
-            "#dc2626",
-        )
+    stores = ["全部"] + sorted(compact_rank["店铺"].dropna().astype(str).unique())
+    current_store = st.session_state.get("rank_store_filter", "全部")
+    if current_store not in stores:
+        current_store = "全部"
+        st.session_state["rank_store_filter"] = current_store
+
+    filter_col, chart_col = st.columns([0.85, 4.15], vertical_alignment="top")
+    with filter_col:
+        st.markdown("**筛选店铺**")
+        for index, store in enumerate(stores):
+            key = "rank_store_all" if store == "全部" else f"rank_store_{index}"
+            if st.button(
+                store,
+                key=key,
+                type="primary" if store == current_store else "secondary",
+                width="stretch",
+            ):
+                st.session_state["rank_store_filter"] = store
+                st.rerun()
+
+    filtered_rank = compact_rank if current_store == "全部" else compact_rank[compact_rank["店铺"] == current_store]
+    with chart_col:
+        profit_col, loss_col = st.columns(2)
+        with profit_col:
+            _render_product_rank_chart(
+                filtered_rank[filtered_rank["类型"] == "盈利"],
+                "实时盈亏",
+                "盈利产品 TOP5",
+                "暂无盈利产品",
+                "#16a34a",
+            )
+        with loss_col:
+            _render_product_rank_chart(
+                filtered_rank[filtered_rank["类型"] == "亏损"],
+                "实时盈亏",
+                "亏损产品 TOP5",
+                "暂无亏损产品",
+                "#dc2626",
+            )
 
 
 with st.sidebar:
@@ -560,6 +757,8 @@ with st.sidebar:
     sidebar_link("投产计算器", roi_url())
     sidebar_link("达人管理", koc_url())
     sidebar_link("AI 生图", ai_image_url())
+
+inject_dashboard_styles()
 
 if page_mode == "SKU成本维护":
     render_sku_cost_manager()
@@ -583,9 +782,9 @@ except Exception as exc:
 
 title_col, refresh_col = st.columns([5, 1], vertical_alignment="center")
 with title_col:
-    st.title("天猫四店日报分析")
+    st.title("店铺数据")
 with refresh_col:
-    if st.button("刷新数据", type="primary", width="stretch"):
+    if st.button("↻", type="primary", key="refresh_data_icon", help="刷新数据"):
         st.cache_data.clear()
         st.rerun()
 
@@ -599,6 +798,8 @@ else:
     st.info("暂无实时抓取快照，顶部暂以财务日报最新日期展示。")
     render_latest_store_snapshot(all_daily)
     render_latest_product_extremes(all_daily)
+
+render_profit_advice_floating(realtime_daily, all_daily)
 
 filter_cols = st.columns([1.2, 1.4, 1])
 with filter_cols[0]:
