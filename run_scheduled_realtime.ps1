@@ -8,6 +8,7 @@ $RunScript = Join-Path $BaseDir "qianniu_profit_crawler_v5_5.py"
 $UploadScript = Join-Path $BaseDir "upload_realtime_snapshot.py"
 $SyncSkuScript = Join-Path $BaseDir "sync_sku_cost.py"
 $FeishuScript = Join-Path $BaseDir "notify_feishu.py"
+$LoginCheckScript = Join-Path $BaseDir "check_login_status.py"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $LogFile = Join-Path $LogDir ("realtime_" + (Get-Date -Format "yyyyMMdd") + ".log")
@@ -69,6 +70,21 @@ try {
     Set-Location $BaseDir
 
     Write-RunLog "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run started =========="
+
+    & $Python $LoginCheckScript 2>&1 | ForEach-Object {
+        Add-Content -Path $LogFile -Value $_
+        Write-Host $_
+    }
+    $loginCheckCode = $LASTEXITCODE
+    if ($loginCheckCode -eq 20) {
+        Write-RunLog "login check blocked this run; crawler paused until login/captcha is resolved"
+        Write-RunLog "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run paused =========="
+        exit 0
+    }
+    if ($loginCheckCode -ne 0) {
+        Write-RunLog "login check failed, exit code: $loginCheckCode"
+        exit $loginCheckCode
+    }
 
     $syncPullCode = Invoke-PythonStepWithRetry -Label "sync sku cost pull" -Arguments @($SyncSkuScript, "pull")
     if ($syncPullCode -ne 0) {
