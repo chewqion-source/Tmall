@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime
+from html import escape
 from io import BytesIO
 import json
 import mimetypes
@@ -115,6 +116,69 @@ def inject_dashboard_styles() -> None:
 .st-key-store_select_4 button {
     min-height: 38px;
 }
+.metric-card {
+    min-height: 116px;
+    border: 1px solid #dbe3ef;
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    box-shadow: 0 8px 22px rgba(15, 23, 42, .06);
+}
+.metric-card.store {
+    background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+    border-color: #bfdbfe;
+}
+.metric-card.good {
+    background: linear-gradient(180deg, #ecfdf5 0%, #ffffff 100%);
+    border-color: #bbf7d0;
+}
+.metric-card.bad {
+    background: linear-gradient(180deg, #fef2f2 0%, #ffffff 100%);
+    border-color: #fecaca;
+}
+.metric-card.neutral {
+    background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+}
+.metric-label {
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.25;
+    margin-bottom: 10px;
+    white-space: nowrap;
+}
+.metric-value {
+    color: #0f172a;
+    font-size: 24px;
+    line-height: 1.15;
+    font-weight: 760;
+    letter-spacing: 0;
+    overflow-wrap: anywhere;
+}
+.metric-card.store .metric-value {
+    font-size: 20px;
+}
+.metric-delta {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 10px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 650;
+}
+.metric-delta.good {
+    background: #dcfce7;
+    color: #15803d;
+}
+.metric-delta.bad {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+.metric-section-gap {
+    height: 10px;
+}
 </style>
 """,
         unsafe_allow_html=True,
@@ -146,6 +210,31 @@ def color_profit(value: object) -> str:
     if number < 0:
         return "color: #b91c1c; background-color: #fee2e2; font-weight: 700"
     return "color: #475569"
+
+
+def metric_card(label: str, value: str, delta: str | None = None, tone: str = "neutral") -> None:
+    delta_html = ""
+    if delta:
+        delta_tone = "good" if delta.strip().startswith("+") else "bad" if delta.strip().startswith("-") else ""
+        delta_html = f'<div class="metric-delta {delta_tone}">{escape(delta)}</div>'
+    st.markdown(
+        f"""
+<div class="metric-card {escape(tone)}">
+    <div class="metric-label">{escape(label)}</div>
+    <div class="metric-value">{escape(value)}</div>
+    {delta_html}
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def profit_tone(value: float) -> str:
+    if value > 0:
+        return "good"
+    if value < 0:
+        return "bad"
+    return "neutral"
 
 
 def render_store_button_filter(stores: list[str], key_prefix: str = "store_select") -> str:
@@ -197,31 +286,33 @@ def render_overview_metrics(
 
     st.subheader("经营概览")
     metric_cols = st.columns(6)
-    metric_cols[0].metric("当前店铺", selected_store)
-    metric_cols[1].metric("最新销量", f"{store_sales:,.0f}")
-    metric_cols[2].metric("最新订单", f"{store_orders:,.0f}")
-    metric_cols[3].metric("最新盈亏", f"¥{store_profit:,.2f}", delta=signed(store_profit))
-    metric_cols[4].metric("商品数", f"{product_count:,.0f}")
-    metric_cols[5].metric("数据日期", f"{latest_date:%m-%d}")
+    with metric_cols[0]:
+        metric_card("当前店铺", selected_store, tone="store")
+    with metric_cols[1]:
+        metric_card("最新销量", f"{store_sales:,.0f}")
+    with metric_cols[2]:
+        metric_card("最新订单", f"{store_orders:,.0f}")
+    with metric_cols[3]:
+        metric_card("最新盈亏", f"¥{store_profit:,.2f}", signed(store_profit), profit_tone(store_profit))
+    with metric_cols[4]:
+        metric_card("商品数", f"{product_count:,.0f}")
+    with metric_cols[5]:
+        metric_card("数据日期", f"{latest_date:%m-%d}")
 
+    st.markdown('<div class="metric-section-gap"></div>', unsafe_allow_html=True)
     product_cols = st.columns(4)
-    product_cols[0].metric("单品累计销量", f"{selected_summary['total_sales']:,.0f}")
-    product_cols[1].metric(
-        "单品累计盈亏",
-        f"¥{selected_summary['total_profit']:,.2f}",
-        delta=signed(selected_summary["total_profit"]),
-        delta_color="normal",
-    )
-    product_cols[2].metric(
-        f"{latest['sheet']} 单品销量",
-        f"{latest['sales_qty']:,.0f}",
-        delta=signed(latest["sales_change"], 0) if pd.notna(latest["sales_change"]) else None,
-    )
-    product_cols[3].metric(
-        f"{latest['sheet']} 单品盈亏",
-        f"¥{latest['profit']:,.2f}",
-        delta=signed(latest["profit_change"]) if pd.notna(latest["profit_change"]) else None,
-    )
+    total_profit = float(selected_summary["total_profit"])
+    latest_profit = float(latest["profit"])
+    with product_cols[0]:
+        metric_card("单品累计销量", f"{selected_summary['total_sales']:,.0f}")
+    with product_cols[1]:
+        metric_card("单品累计盈亏", f"¥{total_profit:,.2f}", signed(total_profit), profit_tone(total_profit))
+    with product_cols[2]:
+        sales_delta = signed(latest["sales_change"], 0) if pd.notna(latest["sales_change"]) else None
+        metric_card(f"{latest['sheet']} 单品销量", f"{latest['sales_qty']:,.0f}", sales_delta)
+    with product_cols[3]:
+        profit_delta = signed(latest["profit_change"]) if pd.notna(latest["profit_change"]) else None
+        metric_card(f"{latest['sheet']} 单品盈亏", f"¥{latest_profit:,.2f}", profit_delta, profit_tone(latest_profit))
 
 
 def _empty_sku_cost_frame() -> pd.DataFrame:
