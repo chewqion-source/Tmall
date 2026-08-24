@@ -108,6 +108,13 @@ def inject_dashboard_styles() -> None:
 .st-key-rank_store_4 button {
     justify-content: flex-start;
 }
+.st-key-store_select_0 button,
+.st-key-store_select_1 button,
+.st-key-store_select_2 button,
+.st-key-store_select_3 button,
+.st-key-store_select_4 button {
+    min-height: 38px;
+}
 </style>
 """,
         unsafe_allow_html=True,
@@ -139,6 +146,82 @@ def color_profit(value: object) -> str:
     if number < 0:
         return "color: #b91c1c; background-color: #fee2e2; font-weight: 700"
     return "color: #475569"
+
+
+def render_store_button_filter(stores: list[str], key_prefix: str = "store_select") -> str:
+    if not stores:
+        return ""
+    current_store = st.session_state.get("selected_store", stores[0])
+    if current_store not in stores:
+        current_store = stores[0]
+        st.session_state["selected_store"] = current_store
+
+    columns = st.columns(len(stores))
+    for index, store in enumerate(stores):
+        with columns[index]:
+            if st.button(
+                store,
+                key=f"{key_prefix}_{index}",
+                type="primary" if store == current_store else "secondary",
+                width="stretch",
+            ):
+                st.session_state["selected_store"] = store
+                st.rerun()
+    return current_store
+
+
+def render_overview_metrics(
+    selected_store: str,
+    selected_product: str,
+    store_daily: pd.DataFrame,
+    selected_summary: pd.Series,
+    latest: pd.Series,
+    realtime_daily: pd.DataFrame,
+) -> None:
+    source = realtime_daily if not realtime_daily.empty else store_daily
+    store_rows = source[source["store"] == selected_store].copy()
+    if not store_rows.empty:
+        latest_date = store_rows["date"].max()
+        latest_rows = store_rows[store_rows["date"] == latest_date]
+        store_sales = float(latest_rows["sales_qty"].sum())
+        store_orders = float(latest_rows["order_count"].sum())
+        store_profit = float(latest_rows["profit"].sum())
+        product_count = int(latest_rows["product_id"].nunique())
+    else:
+        latest_date = store_daily["date"].max()
+        latest_rows = store_daily[store_daily["date"] == latest_date]
+        store_sales = float(latest_rows["sales_qty"].sum())
+        store_orders = float(latest_rows["order_count"].sum())
+        store_profit = float(latest_rows["profit"].sum())
+        product_count = int(latest_rows["product_id"].nunique())
+
+    st.subheader("经营概览")
+    metric_cols = st.columns(6)
+    metric_cols[0].metric("当前店铺", selected_store)
+    metric_cols[1].metric("最新销量", f"{store_sales:,.0f}")
+    metric_cols[2].metric("最新订单", f"{store_orders:,.0f}")
+    metric_cols[3].metric("最新盈亏", f"¥{store_profit:,.2f}", delta=signed(store_profit))
+    metric_cols[4].metric("商品数", f"{product_count:,.0f}")
+    metric_cols[5].metric("数据日期", f"{latest_date:%m-%d}")
+
+    product_cols = st.columns(4)
+    product_cols[0].metric("单品累计销量", f"{selected_summary['total_sales']:,.0f}")
+    product_cols[1].metric(
+        "单品累计盈亏",
+        f"¥{selected_summary['total_profit']:,.2f}",
+        delta=signed(selected_summary["total_profit"]),
+        delta_color="normal",
+    )
+    product_cols[2].metric(
+        f"{latest['sheet']} 单品销量",
+        f"{latest['sales_qty']:,.0f}",
+        delta=signed(latest["sales_change"], 0) if pd.notna(latest["sales_change"]) else None,
+    )
+    product_cols[3].metric(
+        f"{latest['sheet']} 单品盈亏",
+        f"¥{latest['profit']:,.2f}",
+        delta=signed(latest["profit_change"]) if pd.notna(latest["profit_change"]) else None,
+    )
 
 
 def _empty_sku_cost_frame() -> pd.DataFrame:
@@ -328,6 +411,105 @@ def render_profit_advice_floating(realtime_daily: pd.DataFrame, all_daily: pd.Da
         advice, _found = build_profit_advice(product_id, realtime_daily, all_daily)
         with st.chat_message("assistant"):
             st.markdown(advice.replace("\n", "  \n"))
+
+
+def render_changes_table(selected: pd.DataFrame) -> None:
+    st.subheader("销量 / 盈亏日环比变化")
+    changes = selected[
+        ["sheet", "sales_qty", "sales_change", "sales_change_pct", "profit", "profit_change", "profit_change_pct"]
+    ].rename(
+        columns={
+            "sheet": "日期",
+            "sales_qty": "销量",
+            "sales_change": "销量日增减",
+            "sales_change_pct": "销量日环比",
+            "profit": "盈亏",
+            "profit_change": "盈亏日增减",
+            "profit_change_pct": "盈亏变化率",
+        }
+    )
+    styled_changes = changes.style.map(color_profit, subset=["盈亏", "盈亏日增减"]).format(
+        {
+            "销量": "{:,.0f}",
+            "销量日增减": lambda value: "—" if pd.isna(value) else f"{value:+,.0f}",
+            "销量日环比": lambda value: "—" if pd.isna(value) else f"{value:+.1%}",
+            "盈亏": "{:+,.2f}",
+            "盈亏日增减": lambda value: "—" if pd.isna(value) else f"{value:+,.2f}",
+            "盈亏变化率": lambda value: "—" if pd.isna(value) else f"{value:+.1%}",
+        }
+    )
+    st.dataframe(styled_changes, width="stretch", hide_index=True)
+
+
+def render_product_summary_table(summary: pd.DataFrame, selected_store: str) -> None:
+    st.subheader(f"{selected_store}商品汇总表")
+    summary_view = summary.rename(
+        columns={
+            "product_id": "商品ID",
+            "total_sales": "累计销量",
+            "total_orders": "累计订单量",
+            "total_profit": "累计盈亏",
+            "active_days": "有销量日期数",
+            "sku_count": "SKU数",
+            "latest_sales": "最新销量",
+            "latest_orders": "最新订单量",
+            "latest_profit": "最新盈亏",
+            "latest_sales_change": "最新销量增减",
+            "latest_profit_change": "最新盈亏增减",
+            "avg_daily_sales": "日均销量",
+            "avg_daily_orders": "日均订单量",
+            "avg_daily_profit": "日均盈亏",
+        }
+    )
+    product_thumbnails = load_product_thumbnails(selected_store)
+    summary_view.insert(0, "商品图", summary_view["商品ID"].map(product_thumbnails).fillna(""))
+    profit_columns = ["累计盈亏", "最新盈亏", "最新盈亏增减", "日均盈亏"]
+    styled_summary = summary_view.style.map(color_profit, subset=profit_columns).format(
+        {
+            "累计销量": "{:,.0f}",
+            "累计订单量": "{:,.0f}",
+            "累计盈亏": "{:+,.2f}",
+            "最新销量": "{:,.0f}",
+            "最新订单量": "{:,.0f}",
+            "最新盈亏": "{:+,.2f}",
+            "最新销量增减": "{:+,.0f}",
+            "最新盈亏增减": "{:+,.2f}",
+            "日均销量": "{:,.1f}",
+            "日均订单量": "{:,.1f}",
+            "日均盈亏": "{:+,.2f}",
+        }
+    )
+    st.dataframe(
+        styled_summary,
+        width="stretch",
+        hide_index=True,
+        height=520,
+        row_height=64,
+        column_config={"商品图": st.column_config.ImageColumn("商品图", width="small")},
+    )
+
+
+def render_store_overview_table(all_daily: pd.DataFrame) -> None:
+    st.subheader("四家店铺汇总对比")
+    store_overview = (
+        all_daily.groupby("store", as_index=False)
+        .agg(
+            起始日期=("date", "min"),
+            截止日期=("date", "max"),
+            日期数=("date", "nunique"),
+            商品数=("product_id", "nunique"),
+            总销量=("sales_qty", "sum"),
+            总订单量=("order_count", "sum"),
+            总盈亏=("profit", "sum"),
+        )
+        .rename(columns={"store": "店铺"})
+    )
+    store_overview["起始日期"] = store_overview["起始日期"].dt.strftime("%Y-%m-%d")
+    store_overview["截止日期"] = store_overview["截止日期"].dt.strftime("%Y-%m-%d")
+    styled_overview = store_overview.style.map(color_profit, subset=["总盈亏"]).format(
+        {"总销量": "{:,.0f}", "总订单量": "{:,.0f}", "总盈亏": "{:+,.2f}"}
+    )
+    st.dataframe(styled_overview, width="stretch", hide_index=True)
 
 
 def render_sku_cost_manager() -> None:
@@ -789,31 +971,24 @@ with refresh_col:
         st.rerun()
 
 realtime_daily, realtime_generated_at = load_realtime_snapshot()
-if not realtime_daily.empty:
-    if realtime_generated_at:
-        st.caption(f"顶部实时模块更新时间：{realtime_generated_at}。核心趋势仍以财务导入日报为准。")
-    render_latest_store_snapshot(realtime_daily)
-    render_latest_product_extremes(realtime_daily)
-else:
-    st.info("暂无实时抓取快照，顶部暂以财务日报最新日期展示。")
-    render_latest_store_snapshot(all_daily)
-    render_latest_product_extremes(all_daily)
+data_note = (
+    f"实时模块更新时间：{realtime_generated_at}；趋势和明细以财务导入日报为准。"
+    if realtime_generated_at and not realtime_daily.empty
+    else "暂无实时抓取快照；当前以财务日报最新日期展示。"
+)
+st.caption(data_note)
 
-render_profit_advice_floating(realtime_daily, all_daily)
-
-filter_cols = st.columns([1.2, 1.4, 1])
-with filter_cols[0]:
-    selected_store = st.selectbox("当前店铺", list(sources), index=0)
+st.subheader("筛选")
+selected_store = render_store_button_filter(list(sources))
 store_daily = all_daily[all_daily["store"] == selected_store].copy()
 complete = complete_daily_series(store_daily)
 summary = build_summary(store_daily, complete)
 products = summary["product_id"].tolist()
-with filter_cols[1]:
+filter_cols = st.columns([1.6, 1])
+with filter_cols[0]:
     selected_product = st.selectbox("商品 ID", products, index=0)
-with filter_cols[2]:
+with filter_cols[1]:
     trend_range = st.selectbox("趋势日期范围", TREND_RANGE_OPTIONS, index=5)
-
-st.info(f"当前查看：**{selected_store}**　｜　数据截至 {store_daily['date'].max():%Y-%m-%d}")
 
 if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
     st.warning(
@@ -832,23 +1007,13 @@ store_trend = (
 )
 trend_store = filter_trend_range(store_trend, trend_range)
 
-metric_cols = st.columns(4)
-metric_cols[0].metric("累计销量", f"{selected_summary['total_sales']:,.0f}")
-metric_cols[1].metric(
-    "累计盈亏",
-    f"¥{selected_summary['total_profit']:,.2f}",
-    delta=signed(selected_summary["total_profit"]),
-    delta_color="normal",
-)
-metric_cols[2].metric(
-    f"{latest['sheet']} 销量",
-    f"{latest['sales_qty']:,.0f}",
-    delta=signed(latest["sales_change"], 0) if pd.notna(latest["sales_change"]) else None,
-)
-metric_cols[3].metric(
-    f"{latest['sheet']} 盈亏",
-    f"¥{latest['profit']:,.2f}",
-    delta=signed(latest["profit_change"]) if pd.notna(latest["profit_change"]) else None,
+render_overview_metrics(
+    selected_store,
+    selected_product,
+    store_daily,
+    selected_summary,
+    latest,
+    realtime_daily,
 )
 
 st.subheader(f"核心趋势（{trend_range}）")
@@ -866,95 +1031,15 @@ with chart_cols[3]:
     st.markdown("**单品最新盈亏趋势**")
     render_profit_trend(trend_selected, height=300)
 
-st.subheader("销量 / 盈亏日环比变化")
-changes = selected[
-    ["sheet", "sales_qty", "sales_change", "sales_change_pct", "profit", "profit_change", "profit_change_pct"]
-].rename(
-    columns={
-        "sheet": "日期",
-        "sales_qty": "销量",
-        "sales_change": "销量日增减",
-        "sales_change_pct": "销量日环比",
-        "profit": "盈亏",
-        "profit_change": "盈亏日增减",
-        "profit_change_pct": "盈亏变化率",
-    }
-)
-styled_changes = changes.style.map(color_profit, subset=["盈亏", "盈亏日增减"]).format(
-    {
-        "销量": "{:,.0f}",
-        "销量日增减": lambda value: "—" if pd.isna(value) else f"{value:+,.0f}",
-        "销量日环比": lambda value: "—" if pd.isna(value) else f"{value:+.1%}",
-        "盈亏": "{:+,.2f}",
-        "盈亏日增减": lambda value: "—" if pd.isna(value) else f"{value:+,.2f}",
-        "盈亏变化率": lambda value: "—" if pd.isna(value) else f"{value:+.1%}",
-    }
-)
-st.dataframe(styled_changes, width="stretch", hide_index=True)
+rank_source = realtime_daily if not realtime_daily.empty else all_daily
+rank_tab, detail_tab, compare_tab = st.tabs(["商品排行", "单品明细", "全店对比"])
+with rank_tab:
+    render_latest_product_extremes(rank_source)
+with detail_tab:
+    render_changes_table(selected)
+    render_product_summary_table(summary, selected_store)
+with compare_tab:
+    render_latest_store_snapshot(rank_source)
+    render_store_overview_table(all_daily)
 
-st.subheader(f"{selected_store}商品汇总表")
-summary_view = summary.rename(
-    columns={
-        "product_id": "商品ID",
-        "total_sales": "累计销量",
-        "total_orders": "累计订单量",
-        "total_profit": "累计盈亏",
-        "active_days": "有销量日期数",
-        "sku_count": "SKU数",
-        "latest_sales": "最新销量",
-        "latest_orders": "最新订单量",
-        "latest_profit": "最新盈亏",
-        "latest_sales_change": "最新销量增减",
-        "latest_profit_change": "最新盈亏增减",
-        "avg_daily_sales": "日均销量",
-        "avg_daily_orders": "日均订单量",
-        "avg_daily_profit": "日均盈亏",
-    }
-)
-product_thumbnails = load_product_thumbnails(selected_store)
-summary_view.insert(0, "商品图", summary_view["商品ID"].map(product_thumbnails).fillna(""))
-profit_columns = ["累计盈亏", "最新盈亏", "最新盈亏增减", "日均盈亏"]
-styled_summary = summary_view.style.map(color_profit, subset=profit_columns).format(
-    {
-        "累计销量": "{:,.0f}",
-        "累计订单量": "{:,.0f}",
-        "累计盈亏": "{:+,.2f}",
-        "最新销量": "{:,.0f}",
-        "最新订单量": "{:,.0f}",
-        "最新盈亏": "{:+,.2f}",
-        "最新销量增减": "{:+,.0f}",
-        "最新盈亏增减": "{:+,.2f}",
-        "日均销量": "{:,.1f}",
-        "日均订单量": "{:,.1f}",
-        "日均盈亏": "{:+,.2f}",
-    }
-)
-st.dataframe(
-    styled_summary,
-    width="stretch",
-    hide_index=True,
-    height=520,
-    row_height=64,
-    column_config={"商品图": st.column_config.ImageColumn("商品图", width="small")},
-)
-
-st.subheader("四家店铺汇总对比")
-store_overview = (
-    all_daily.groupby("store", as_index=False)
-    .agg(
-        起始日期=("date", "min"),
-        截止日期=("date", "max"),
-        日期数=("date", "nunique"),
-        商品数=("product_id", "nunique"),
-        总销量=("sales_qty", "sum"),
-        总订单量=("order_count", "sum"),
-        总盈亏=("profit", "sum"),
-    )
-    .rename(columns={"store": "店铺"})
-)
-store_overview["起始日期"] = store_overview["起始日期"].dt.strftime("%Y-%m-%d")
-store_overview["截止日期"] = store_overview["截止日期"].dt.strftime("%Y-%m-%d")
-styled_overview = store_overview.style.map(color_profit, subset=["总盈亏"]).format(
-    {"总销量": "{:,.0f}", "总订单量": "{:,.0f}", "总盈亏": "{:+,.2f}"}
-)
-st.dataframe(styled_overview, width="stretch", hide_index=True)
+render_profit_advice_floating(realtime_daily, all_daily)
