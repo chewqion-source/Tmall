@@ -3,9 +3,15 @@ $ErrorActionPreference = "Stop"
 $BaseDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $StartupDir = [Environment]::GetFolderPath("Startup")
 $Target = Join-Path $StartupDir "TmallRealtimeAgent.vbs"
-$Source = Join-Path $BaseDir "start_realtime_agent_hidden.vbs"
 
-Copy-Item -Path $Source -Destination $Target -Force
+$escapedBaseDir = $BaseDir.Replace("""", """""")
+$vbs = @"
+Set shell = CreateObject("WScript.Shell")
+cmd = "cmd.exe /c cd /d ""$escapedBaseDir"" && ""D:\python\python.exe"" realtime_agent.py"
+shell.Run cmd, 0, False
+"@
+
+Set-Content -Path $Target -Value $vbs -Encoding ASCII
 Start-Process -FilePath "wscript.exe" -ArgumentList "`"$Target`"" -WindowStyle Hidden
 
 Write-Host "Installed and started local realtime agent."
