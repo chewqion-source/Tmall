@@ -621,7 +621,13 @@ def render_sku_cost_manager() -> None:
     metric_cols[3].metric("涉及店铺", f"{data['店铺'].replace('', pd.NA).dropna().nunique():,.0f}")
 
     filter_cols = st.columns([1, 1.2, 1])
-    stores = sorted(store for store in data["店铺"].dropna().unique() if str(store).strip())
+    default_store_options = ["易丽洁", "咖时光", "坐拥_宁静", "坐拥宁静", "国货严选"]
+    stores = sorted(
+        {
+            *default_store_options,
+            *[str(store).strip() for store in data["店铺"].dropna().unique() if str(store).strip()],
+        }
+    )
     with filter_cols[0]:
         selected_store = st.selectbox("店铺筛选", ["全部"] + stores)
     with filter_cols[1]:
@@ -645,6 +651,38 @@ def render_sku_cost_manager() -> None:
     view = view.reset_index(drop=True)
 
     st.caption("可直接修改单件货价、快递费，也可以在最后新增行。保存后会写回线上 sku_cost.xlsx。")
+
+    batch_cols = st.columns([1, 1, 1, 1.2])
+    with batch_cols[0]:
+        batch_column = st.selectbox("\u6279\u91cf\u5b57\u6bb5", ["\u5feb\u9012\u8d39", "\u5355\u4ef6\u8d27\u4ef7"])
+    with batch_cols[1]:
+        batch_value = st.number_input("\u6279\u91cf\u91d1\u989d", min_value=0.0, value=3.7, step=0.1, format="%.2f")
+    with batch_cols[2]:
+        batch_scope = st.selectbox("\u586b\u5199\u8303\u56f4", ["\u53ea\u586b\u7a7a\u503c", "\u8986\u76d6\u5f53\u524d\u7b5b\u9009"])
+    with batch_cols[3]:
+        st.write("")
+        st.write("")
+        if st.button("\u6279\u91cf\u586b\u5199\u5f53\u524d\u7b5b\u9009", type="secondary", width="stretch"):
+            target_ids = view["_row_id"].dropna().astype(int).tolist()
+            if not target_ids:
+                st.warning("\u5f53\u524d\u7b5b\u9009\u6ca1\u6709\u53ef\u586b\u5199\u7684 SKU\u3002")
+            else:
+                save_data = data.copy()
+                target_mask = save_data.index.isin(target_ids)
+                if batch_scope == "\u53ea\u586b\u7a7a\u503c":
+                    target_mask = target_mask & save_data[batch_column].isna()
+                changed = int(target_mask.sum())
+                if changed == 0:
+                    st.info("\u5f53\u524d\u7b5b\u9009\u91cc\u6ca1\u6709\u9700\u8981\u586b\u5199\u7684\u7a7a\u503c\u3002")
+                else:
+                    save_data.loc[target_mask, batch_column] = round(float(batch_value), 2)
+                    backup_path = save_sku_cost_frame(save_data)
+                    st.success(
+                        f"\u5df2\u6279\u91cf\u586b\u5199 {changed} \u884c {batch_column}\u3002"
+                        + (f" \u65e7\u6587\u4ef6\u5907\u4efd\uff1a{backup_path.name}" if backup_path else "")
+                    )
+                    st.rerun()
+
     edited = st.data_editor(
         view,
         hide_index=True,
@@ -652,7 +690,7 @@ def render_sku_cost_manager() -> None:
         width="stretch",
         height=560,
         column_config={
-            "店铺": st.column_config.SelectboxColumn("店铺", options=["易丽洁", "咖时光", "坐拥_宁静", "坐拥宁静"]),
+            "店铺": st.column_config.SelectboxColumn("店铺", options=stores),
             "商品ID": st.column_config.TextColumn("商品ID"),
             "商家编码": st.column_config.TextColumn("商家编码"),
             "SKU规格": st.column_config.TextColumn("SKU规格"),
