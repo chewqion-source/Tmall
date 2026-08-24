@@ -647,6 +647,7 @@ def render_sku_cost_manager() -> None:
         ]
     if only_missing:
         view = view[view["单件货价"].isna() | view["快递费"].isna()]
+    view = view.reset_index(drop=True)
 
     st.caption("可直接修改单件货价、快递费，也可以在最后新增行。保存后会写回线上 sku_cost.xlsx。")
     edited = st.data_editor(
@@ -1040,7 +1041,22 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
 
 with st.sidebar:
     st.header("店铺与数据")
-    page_mode = st.radio("页面", ["日报看板", "SKU成本维护"])
+    page_param = str(st.query_params.get("page", "dashboard"))
+    page_mode = "SKU成本维护" if page_param == "sku-cost" else "日报看板"
+    if st.button(
+        "店铺数据",
+        type="primary" if page_mode == "日报看板" else "secondary",
+        width=168,
+    ):
+        st.query_params["page"] = "dashboard"
+        st.rerun()
+    if st.button(
+        "SKU成本维护",
+        type="primary" if page_mode == "SKU成本维护" else "secondary",
+        width=168,
+    ):
+        st.query_params["page"] = "sku-cost"
+        st.rerun()
     sidebar_link("财务上传报表", upload_url())
     sidebar_link("投产计算器", roi_url())
     sidebar_link("达人管理", koc_url())
