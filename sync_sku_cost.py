@@ -18,7 +18,7 @@ SSH_KEY_FILE = BASE_DIR / ".ssh_tmp" / "tmall_codex_temp_ed25519"
 
 REMOTE_HOST = "150.158.133.102"
 REMOTE_USER = "ubuntu"
-REMOTE_SKU_COST = "/opt/tmall-dashboard/releases/526879f/data/sku_cost.xlsx"
+REMOTE_SKU_COST = "/opt/tmall-dashboard/data/sku_cost.xlsx"
 SKU_COLUMNS = [
     "店铺",
     "商品ID",
@@ -140,7 +140,7 @@ def upload_local_to_remote() -> int:
         return 1
 
     client = _connect()
-    client.exec_command("mkdir -p /opt/tmall-dashboard/releases/526879f/data")[1].channel.recv_exit_status()
+    client.exec_command("mkdir -p /opt/tmall-dashboard/data")[1].channel.recv_exit_status()
     sftp = client.open_sftp()
     try:
         sftp.put(str(LOCAL_SKU_COST), REMOTE_SKU_COST)
