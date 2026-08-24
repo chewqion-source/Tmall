@@ -60,6 +60,7 @@ GUOHUO_MARKETING_ESTIMATE_RATE = 0.20
 SKU_SCRIPT = BASE_DIR / "order_sku_crawler_v2_5_4.py"
 PROFIT_SCRIPT = BASE_DIR / "qianniu_profit_crawler.py"
 REFUND_SCRIPT = BASE_DIR / "refund_crawler_v3_6_2.py"
+GUOHUO_SCRIPT = BASE_DIR / "guohuo_yanxuan_crawler.py"
 
 
 # ============================================================
@@ -364,6 +365,43 @@ def run_refund_crawler():
 
     print()
     print("✓ 退款抓取阶段执行完成")
+
+
+def run_guohuo_yanxuan_crawler():
+    global SKU_SUCCESS_SHOPS
+
+    print()
+    print("=" * 76)
+    print("阶段 3.5 / 4：抓取国货严选实时数据 + 投流托管 + SKU")
+    print("=" * 76)
+
+    if not GUOHUO_SCRIPT.exists():
+        raise RuntimeError(
+            f"找不到国货严选抓取器：{GUOHUO_SCRIPT}"
+        )
+
+    module = import_module_from_file(
+        "_guohuo_yanxuan_runtime",
+        GUOHUO_SCRIPT
+    )
+
+    if not hasattr(module, "main"):
+        raise RuntimeError(
+            f"{GUOHUO_SCRIPT.name} 中找不到 main()"
+        )
+
+    output = module.main() or {}
+
+    if not output.get("success"):
+        raise RuntimeError(
+            "国货严选抓取未成功"
+        )
+
+    SKU_SUCCESS_SHOPS.add(
+        GUOHUO_SHOP_NAME
+    )
+
+    print("✓ 国货严选抓取阶段执行完成")
 
 
 def load_shop_refund_total(shop):
@@ -1582,6 +1620,18 @@ def integrate_all_shops():
 
     shops = load_enabled_shops()
 
+    if GUOHUO_SHOP_NAME in SKU_SUCCESS_SHOPS:
+        exists = any(
+            shop["name"] == GUOHUO_SHOP_NAME
+            for shop in shops
+        )
+
+        if not exists:
+            shops.append({
+                "name": GUOHUO_SHOP_NAME,
+                "safe_name": safe_filename(GUOHUO_SHOP_NAME),
+            })
+
     frames = []
 
     success = 0
@@ -1742,6 +1792,9 @@ def main():
 
     # 3. 退款（V3.6 并行稳定版）
     run_refund_crawler()
+
+    # 3.5 国货严选（淘工厂接口）
+    run_guohuo_yanxuan_crawler()
 
     # 4. SKU成本 + 退款覆盖 / 重算
     integrate_all_shops()

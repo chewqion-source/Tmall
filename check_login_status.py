@@ -21,6 +21,7 @@ SHOPS_FILE = BASE_DIR / "shops.json"
 CONFIG_FILE = BASE_DIR / "config" / "feishu_webhook.json"
 STATE_FILE = BASE_DIR / "logs" / "scheduled" / "login_status_state.json"
 TEST_URL = "https://myseller.taobao.com/home.htm/trade-platform/tp/sold"
+GUOHUO_TEST_URL = "https://tgc.tmall.com/ds/page/supplier/product-data?from=menu"
 
 PORT_LABELS = {
     9222: "易丽洁",
@@ -59,6 +60,7 @@ CAPTCHA_TEXT_KEYWORDS = [
 
 GOOD_URL_KEYWORDS = [
     "myseller.taobao.com",
+    "tgc.tmall.com",
     "trade-platform",
     "QnworkbenchHome",
 ]
@@ -77,6 +79,15 @@ def load_shops() -> list[dict[str, object]]:
             {
                 "name": PORT_LABELS.get(port) or str(raw.get("name") or f"端口{port}"),
                 "port": port,
+                "test_url": TEST_URL,
+            }
+        )
+    if not any(int(shop["port"]) == 9225 for shop in shops):
+        shops.append(
+            {
+                "name": PORT_LABELS[9225],
+                "port": 9225,
+                "test_url": GUOHUO_TEST_URL,
             }
         )
     return shops
@@ -186,8 +197,9 @@ def check_shop(pw, shop: dict[str, object]) -> dict[str, str]:
 
         context = browser.contexts[0]
         page = pick_page(context)
+        test_url = str(shop.get("test_url") or TEST_URL)
         try:
-            page.goto(TEST_URL, wait_until="domcontentloaded", timeout=25_000)
+            page.goto(test_url, wait_until="domcontentloaded", timeout=25_000)
         except PlaywrightTimeoutError:
             pass
         page.wait_for_timeout(2_000)
@@ -225,7 +237,11 @@ def check_shop(pw, shop: dict[str, object]) -> dict[str, str]:
             result["reason"] = f"页面提示需要登录或验证：{bad_text}"
             return result
 
-        if "myseller.taobao.com" not in url:
+        if not (
+            "myseller.taobao.com" in url
+            or
+            "tgc.tmall.com" in url
+        ):
             result["status"] = "bad"
             result["reason"] = f"未停留在千牛卖家页面，当前页面：{url}"
             return result
