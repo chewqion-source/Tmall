@@ -717,6 +717,44 @@ def load_product_thumbnails(store: str) -> dict[str, str]:
 
 
 TREND_RANGE_OPTIONS = ("今日", "昨日", "3天", "7天", "15天", "近一个月", "近半年")
+CHART_CARD_MARGIN = dict(l=18, r=18, t=46, b=24)
+
+
+def style_chart_card(fig: go.Figure, title: str, height: int) -> go.Figure:
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=15, color="#0f172a"), x=0.02, xanchor="left"),
+        height=height,
+        paper_bgcolor="#f8fbff",
+        plot_bgcolor="#ffffff",
+        margin=CHART_CARD_MARGIN,
+        font=dict(family="Arial, Microsoft YaHei, sans-serif", size=11, color="#475569"),
+        hoverlabel=dict(bgcolor="#ffffff", bordercolor="#dbe3ef", font=dict(color="#0f172a")),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.05,
+            xanchor="right",
+            x=1,
+            font=dict(size=11, color="#475569"),
+        ),
+        shapes=[
+            dict(
+                type="rect",
+                xref="paper",
+                yref="paper",
+                x0=0,
+                y0=0,
+                x1=1,
+                y1=1,
+                line=dict(color="#dbe3ef", width=1),
+                fillcolor="rgba(0,0,0,0)",
+                layer="below",
+            )
+        ],
+    )
+    fig.update_xaxes(showgrid=True, gridcolor="#edf2f7", zeroline=False, linecolor="#dbe3ef")
+    fig.update_yaxes(showgrid=True, gridcolor="#edf2f7", zeroline=False, linecolor="#dbe3ef")
+    return fig
 
 
 def filter_trend_range(data: pd.DataFrame, range_label: str) -> pd.DataFrame:
@@ -739,7 +777,7 @@ def filter_trend_range(data: pd.DataFrame, range_label: str) -> pd.DataFrame:
     return filtered if not filtered.empty else data.tail(1)
 
 
-def render_sales_orders_trend(data: pd.DataFrame, height: int = 360) -> None:
+def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360) -> None:
     sales_fig = make_subplots(specs=[[{"secondary_y": True}]])
     sales_fig.add_trace(
         go.Scatter(
@@ -768,16 +806,12 @@ def render_sales_orders_trend(data: pd.DataFrame, height: int = 360) -> None:
     sales_fig.update_xaxes(title_text="")
     sales_fig.update_yaxes(title_text="销量", secondary_y=False)
     sales_fig.update_yaxes(title_text="订单", secondary_y=True, rangemode="tozero")
-    sales_fig.update_layout(
-        height=height,
-        margin=dict(l=6, r=6, t=8, b=4),
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=11)),
-    )
+    style_chart_card(sales_fig, title, height)
+    sales_fig.update_layout(hovermode="x unified")
     st.plotly_chart(sales_fig, width="stretch")
 
 
-def render_profit_trend(data: pd.DataFrame, height: int = 360) -> None:
+def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360) -> None:
     profit_colors = ["#16a34a" if value >= 0 else "#dc2626" for value in data["profit"]]
     profit_fig = go.Figure(
         go.Bar(
@@ -790,12 +824,8 @@ def render_profit_trend(data: pd.DataFrame, height: int = 360) -> None:
         )
     )
     profit_fig.add_hline(y=0, line_color="#64748b", line_width=1)
-    profit_fig.update_layout(
-        height=height,
-        xaxis_title="",
-        yaxis_title="盈亏",
-        margin=dict(l=6, r=6, t=8, b=4),
-    )
+    style_chart_card(profit_fig, title, height)
+    profit_fig.update_layout(xaxis_title="", yaxis_title="盈亏", showlegend=False)
     st.plotly_chart(profit_fig, width="stretch")
 
 
@@ -848,16 +878,8 @@ def _render_product_rank_chart(
         )
     )
     fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
-    fig.update_layout(
-        title=dict(text=title, font=dict(size=14)),
-        height=min(450, 96 + 28 * len(chart_data)),
-        margin=dict(l=6, r=36, t=34, b=8),
-        xaxis_title="",
-        yaxis_title="",
-        showlegend=False,
-        font=dict(size=11),
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="#e5e7eb", zeroline=False)
+    style_chart_card(fig, title, min(450, 112 + 30 * len(chart_data)))
+    fig.update_layout(xaxis_title="", yaxis_title="", showlegend=False)
     fig.update_yaxes(tickfont=dict(size=10))
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
@@ -883,15 +905,8 @@ def _render_store_profit_chart(latest_overview: pd.DataFrame) -> None:
         )
     )
     fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
-    fig.update_layout(
-        height=220,
-        margin=dict(l=6, r=42, t=10, b=8),
-        xaxis_title="",
-        yaxis_title="",
-        showlegend=False,
-        font=dict(size=12),
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="#e5e7eb", zeroline=False)
+    style_chart_card(fig, "店铺实时盈亏", 240)
+    fig.update_layout(xaxis_title="", yaxis_title="", showlegend=False)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
@@ -1110,17 +1125,13 @@ render_overview_metrics(
 st.subheader(f"核心趋势（{trend_range}）")
 chart_cols = st.columns(4)
 with chart_cols[0]:
-    st.markdown("**累计销量趋势**")
-    render_sales_orders_trend(trend_store, height=300)
+    render_sales_orders_trend(trend_store, "累计销量趋势", height=300)
 with chart_cols[1]:
-    st.markdown("**累计盈亏趋势**")
-    render_profit_trend(trend_store, height=300)
+    render_profit_trend(trend_store, "累计盈亏趋势", height=300)
 with chart_cols[2]:
-    st.markdown("**单品最新销量趋势**")
-    render_sales_orders_trend(trend_selected, height=300)
+    render_sales_orders_trend(trend_selected, "单品最新销量趋势", height=300)
 with chart_cols[3]:
-    st.markdown("**单品最新盈亏趋势**")
-    render_profit_trend(trend_selected, height=300)
+    render_profit_trend(trend_selected, "单品最新盈亏趋势", height=300)
 
 rank_source = realtime_daily if not realtime_daily.empty else all_daily
 rank_tab, detail_tab, compare_tab = st.tabs(["商品排行", "单品明细", "全店对比"])
