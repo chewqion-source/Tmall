@@ -8,6 +8,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import uuid
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -44,6 +45,9 @@ SKU_COST_PATH = Path(os.environ.get("SKU_COST_FILE", DATA_DIR / "sku_cost.xlsx")
 REALTIME_SNAPSHOT_PATH = Path(
     os.environ.get("TMALL_REALTIME_FILE", DATA_DIR / "realtime" / "latest.json")
 )
+TASK_DIR = DATA_DIR / "tasks"
+REALTIME_TASK_PATH = Path(os.environ.get("TMALL_REALTIME_TASK_FILE", TASK_DIR / "realtime_task.json"))
+REALTIME_STATUS_PATH = Path(os.environ.get("TMALL_REALTIME_STATUS_FILE", TASK_DIR / "realtime_status.json"))
 
 
 def inject_dashboard_styles() -> None:
@@ -367,6 +371,63 @@ def sku_cost_download_bytes(data: pd.DataFrame) -> bytes:
     output = BytesIO()
     data.to_excel(output, index=False, sheet_name="SKU成本配置")
     return output.getvalue()
+
+
+def read_json_file(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def write_json_file(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_path.replace(path)
+
+
+def render_realtime_agent_panel() -> None:
+    status = read_json_file(REALTIME_STATUS_PATH)
+    task = read_json_file(REALTIME_TASK_PATH)
+    status_text = str(status.get("status") or "unknown")
+    status_labels = {
+        "idle": "空闲",
+        "checking_login": "检查登录",
+        "running": "运行中",
+        "success": "完成",
+        "failed": "失败",
+        "paused": "暂停",
+        "skipped": "跳过",
+        "error": "异常",
+        "stopped": "已停止",
+        "unknown": "未连接",
+    }
+    status_label = status_labels.get(status_text, status_text)
+    pending_task = task.get("action") == "run_realtime" and task.get("status") in {"pending", "paused", "running"}
+    is_busy = status_text in {"checking_login", "running"} or task.get("status") == "running"
+
+    panel_cols = st.columns([1.2, 1.2, 2.4, 1.2], vertical_alignment="center")
+    panel_cols[0].metric("本地守护进程", status_label)
+    panel_cols[1].metric("最近更新", str(status.get("updated_at") or "—"))
+    panel_cols[2].caption(str(status.get("message") or status.get("step") or "等待本地电脑接收任务"))
+    if pending_task and task.get("status") != "success":
+        panel_cols[2].caption(f"当前任务：{task.get('id')} / {task.get('status')}")
+
+    with panel_cols[3]:
+        if st.button("立即抓取实时数据", type="primary", width="stretch", disabled=is_busy):
+            task_payload = {
+                "id": uuid.uuid4().hex[:12],
+                "action": "run_realtime",
+                "status": "pending",
+                "requested_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "requested_by": "dashboard",
+            }
+            write_json_file(REALTIME_TASK_PATH, task_payload)
+            st.success("已派发抓取任务，本地守护进程会在约 30 秒内接收。")
+            st.rerun()
 
 
 def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.DataFrame, str | None]:
@@ -1132,6 +1193,7 @@ data_note = (
     else "暂无实时抓取快照；当前以财务日报最新日期展示。"
 )
 st.caption(data_note)
+render_realtime_agent_panel()
 
 st.subheader("筛选")
 selected_store = render_store_button_filter(list(sources))
