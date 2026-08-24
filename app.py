@@ -39,13 +39,8 @@ SKU_COST_HEADERS = [
     "首次发现日期",
     "最近成交日期",
 ]
-SKU_COST_PATH = Path(
-    os.environ.get(
-        "SKU_COST_FILE",
-        Path(__file__).resolve().parent / "data" / "sku_cost.xlsx",
-    )
-)
 DATA_DIR = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
+SKU_COST_PATH = Path(os.environ.get("SKU_COST_FILE", DATA_DIR / "sku_cost.xlsx"))
 REALTIME_SNAPSHOT_PATH = Path(
     os.environ.get("TMALL_REALTIME_FILE", DATA_DIR / "realtime" / "latest.json")
 )
