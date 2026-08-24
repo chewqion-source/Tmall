@@ -54,6 +54,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_ROOT = BASE_DIR / "data"
 SHOPS_FILE = BASE_DIR / "shops.json"
 
+GUOHUO_SHOP_NAME = "国货严选"
+GUOHUO_MARKETING_ESTIMATE_RATE = 0.20
+
 SKU_SCRIPT = BASE_DIR / "order_sku_crawler_v2_5_4.py"
 PROFIT_SCRIPT = BASE_DIR / "qianniu_profit_crawler.py"
 REFUND_SCRIPT = BASE_DIR / "refund_crawler_v3_6_2.py"
@@ -855,6 +858,7 @@ def integrate_shop(
         "平台费用",
         "税费",
         "其他成本",
+        "预估营销托管费用",
         "支付金额",
         "总推广消耗",
     ]:
@@ -962,6 +966,20 @@ def integrate_shop(
         ]
     )
 
+    df[
+        "预估营销托管费用"
+    ] = 0.0
+    if shop.get("name") == GUOHUO_SHOP_NAME:
+        df[
+            "预估营销托管费用"
+        ] = (
+            df[
+                "支付金额"
+            ]
+            *
+            GUOHUO_MARKETING_ESTIMATE_RATE
+        )
+
     # 重算毛利
     df[
         "销售毛利"
@@ -1001,6 +1019,10 @@ def integrate_shop(
         -
         df[
             "其他成本"
+        ]
+        -
+        df[
+            "预估营销托管费用"
         ]
         -
         df[
@@ -1130,6 +1152,7 @@ def integrate_shop(
         "快递成本",
         "平台费用",
         "税费",
+        "预估营销托管费用",
         "退款金额",
         "销售毛利",
         "实时盈亏",
@@ -1223,6 +1246,7 @@ def integrate_shop(
         "税费",
 
         "其他成本",
+        "预估营销托管费用",
         "退款金额",
         "退款口径",
         "退款数据状态",
@@ -1451,6 +1475,7 @@ def write_realtime_snapshot(df):
                 "freight_cost": _snapshot_number(row, "快递成本"),
                 "platform_fee": _snapshot_number(row, "平台费用"),
                 "tax_fee": _snapshot_number(row, "税费"),
+                "estimated_marketing_cost": _snapshot_number(row, "预估营销托管费用"),
                 "refund_amount": _snapshot_number(row, "退款金额"),
                 "gross_profit": _snapshot_number(row, "销售毛利"),
                 "profit": _snapshot_number(row, "实时盈亏"),
@@ -1728,7 +1753,7 @@ def main():
 
     print()
     print(
-        "当前实时盈亏已扣：SKU货品成本、订单快递费、平台费用、税费、推广费、当天退款成功金额。"
+        "当前实时盈亏已扣：SKU货品成本、订单快递费、平台费用、税费、推广费、当天退款成功金额；国货严选额外按支付金额20%预估营销托管费用。"
     )
 
 
