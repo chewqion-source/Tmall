@@ -45,6 +45,16 @@ def _money(value: float) -> str:
     return f"¥{value:,.2f}"
 
 
+def _money_optional(value: object) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if pd.isna(number):
+        return "-"
+    return _money(number)
+
+
 def _snapshot_summary() -> dict[str, object]:
     if not SNAPSHOT_FILE.exists():
         raise FileNotFoundError(f"实时快照不存在：{SNAPSHOT_FILE}")
@@ -55,10 +65,12 @@ def _snapshot_summary() -> dict[str, object]:
         raise RuntimeError("实时快照没有 records")
 
     data = pd.DataFrame(records)
-    for column in ["profit", "pay_amount", "ad_cost", "sales_qty", "order_count"]:
+    for column in ["profit", "pay_amount", "ad_cost", "ad_balance", "sales_qty", "order_count"]:
         if column not in data.columns:
-            data[column] = 0
-        data[column] = pd.to_numeric(data[column], errors="coerce").fillna(0)
+            data[column] = None if column == "ad_balance" else 0
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+        if column != "ad_balance":
+            data[column] = data[column].fillna(0)
 
     store_summary = (
         data.groupby("store", as_index=False)
@@ -66,6 +78,7 @@ def _snapshot_summary() -> dict[str, object]:
             profit=("profit", "sum"),
             pay_amount=("pay_amount", "sum"),
             ad_cost=("ad_cost", "sum"),
+            ad_balance=("ad_balance", "max"),
             sales_qty=("sales_qty", "sum"),
             order_count=("order_count", "sum"),
         )
@@ -111,8 +124,11 @@ def _build_message() -> dict[str, object]:
     store_lines = []
     for _, row in stores.iterrows():
         store_lines.append(
-            f"{row['store']}：{_money(float(row['profit']))}，"
-            f"支付 {_money(float(row['pay_amount']))}，推广 {_money(float(row['ad_cost']))}"
+            f"【{row['store']}】："
+            f"盈亏{_money(float(row['profit']))}｜"
+            f"支付 {_money(float(row['pay_amount']))}｜"
+            f"推广 {_money(float(row['ad_cost']))}｜"
+            f"余额 {_money_optional(row.get('ad_balance'))}"
         )
 
     text = "\n".join(

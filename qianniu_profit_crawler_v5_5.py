@@ -1542,6 +1542,7 @@ def write_realtime_snapshot(df):
                 "keyword_promotion_roi": _snapshot_optional_number(row, "关键词推广ROI"),
                 "current_roi": current_roi,
                 "break_even_roi": break_even_roi,
+                "ad_balance": _snapshot_optional_number(row, "账户推广余额"),
                 "order_count": _snapshot_number(row, "SKU订单数"),
                 "sku_count": _snapshot_number(row, "SKU成交件数"),
                 "merch_cost": _snapshot_number(row, "货品成本"),

@@ -130,6 +130,123 @@ def nested_value(
         return default
 
 
+BALANCE_KEYWORDS = (
+    "balance",
+    "available",
+    "accountBalance",
+    "availableBalance",
+    "availableAmount",
+    "cashBalance",
+    "可用余额",
+    "账户余额",
+    "余额",
+)
+
+
+def _extract_balance_candidates(obj, path=""):
+    candidates = []
+
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            key_text = str(key)
+            next_path = f"{path}.{key_text}" if path else key_text
+            lower_key = key_text.lower()
+
+            if any(token.lower() in lower_key for token in BALANCE_KEYWORDS):
+                if isinstance(value, dict):
+                    for nested_key in ("value", "amount", "available", "balance", "balanceAmount"):
+                        if nested_key in value:
+                            try:
+                                candidates.append((next_path, float(value[nested_key])))
+                            except Exception:
+                                pass
+                else:
+                    try:
+                        candidates.append((next_path, float(value)))
+                    except Exception:
+                        pass
+
+            candidates.extend(_extract_balance_candidates(value, next_path))
+
+    elif isinstance(obj, list):
+        for index, value in enumerate(obj[:100]):
+            candidates.extend(_extract_balance_candidates(value, f"{path}[{index}]"))
+
+    return candidates
+
+
+def _choose_balance(candidates):
+    valid = []
+    for path, value in candidates:
+        if value is None or math.isnan(value) or value < 0:
+            continue
+        lower_path = str(path).lower()
+        score = 0
+        if "available" in lower_path or "可用" in lower_path:
+            score += 4
+        if "balance" in lower_path or "余额" in lower_path:
+            score += 3
+        if "account" in lower_path or "账户" in lower_path:
+            score += 2
+        if value > 0:
+            score += 1
+        valid.append((score, path, value))
+
+    if not valid:
+        return None
+
+    valid.sort(key=lambda item: (item[0], item[2]), reverse=True)
+    return float(valid[0][2])
+
+
+def capture_account_balance(page, shop_name, urls):
+    captured = {
+        "balance": None,
+        "url": "",
+    }
+
+    def handler(response):
+        url = response.url
+        lower_url = url.lower()
+        if not any(token in lower_url for token in ("balance", "account", "recharge", "queryagencyadbalance")):
+            return
+
+        try:
+            data = response.json()
+        except Exception:
+            return
+
+        balance = _choose_balance(_extract_balance_candidates(data))
+        if balance is not None:
+            captured["balance"] = balance
+            captured["url"] = url
+
+    page.on("response", handler)
+
+    for url in urls:
+        if not url:
+            continue
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT)
+        except Exception:
+            pass
+        page.wait_for_timeout(5000)
+        if captured["balance"] is not None:
+            break
+
+    try:
+        page.remove_listener("response", handler)
+    except Exception:
+        pass
+
+    if captured["balance"] is None:
+        print(f"ℹ️ [{shop_name}] 未抓到账户推广余额")
+        return None
+
+    print(f"[{shop_name}] 账户推广余额：¥{captured['balance']:.2f}")
+    return captured["balance"]
+
+
 def change_query_param(
     url,
     **params
@@ -2767,6 +2884,7 @@ def merge_and_calculate(
         "盈亏状态",
         "实际净投产",
         "推广后台ROI",
+        "账户推广余额",
 
         "支付买家数",
         "商品访客",
@@ -3064,6 +3182,16 @@ def run_shop(
                 search_df
             )
         )
+
+        account_balance = capture_account_balance(
+            page,
+            name,
+            [
+                shop.get("site_url", ""),
+                shop.get("search_url", ""),
+            ]
+        )
+        result["账户推广余额"] = account_balance
 
         # ====================================================
         # 5. 保存
