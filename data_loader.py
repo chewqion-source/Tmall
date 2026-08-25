@@ -16,9 +16,10 @@ import pandas as pd
 WORKBOOK_BASENAME = "2026年天猫日报表-易丽洁8月"
 DATE_SHEET_PATTERN = re.compile(r"^(\d{1,2})\.(\d{1,2})$")
 SUPPORTED_EXTENSIONS = (".xls", ".xlsx", ".xlsm")
+OLD_ZY_STORE_NAME = "坐拥" + "宁静"
 STORE_FILE_PATTERNS = {
     "易丽洁": ("2026年天猫日报表-易丽洁*",),
-    "坐拥宁静": ("2026年坐拥宁静日报表*",),
+    "坐拥_宁静": ("2026年坐拥_宁静日报表*", f"2026年{OLD_ZY_STORE_NAME}日报表*"),
     "国货严选": ("2026年国货严选日报表*",),
     "咖时光": ("2026年咖时光日报表-天猫*",),
 }

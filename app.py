@@ -40,6 +40,11 @@ SKU_COST_HEADERS = [
     "首次发现日期",
     "最近成交日期",
 ]
+OLD_ZY_STORE_NAME = "坐拥" + "宁静"
+SHOP_NAME_ALIASES = {
+    OLD_ZY_STORE_NAME: "坐拥_宁静",
+}
+DEFAULT_STORE_OPTIONS = ["易丽洁", "咖时光", "坐拥_宁静", "国货严选"]
 DATA_DIR = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
 SKU_COST_PATH = Path(os.environ.get("SKU_COST_FILE", DATA_DIR / "sku_cost.xlsx"))
 REALTIME_SNAPSHOT_PATH = Path(
@@ -318,6 +323,19 @@ def _empty_sku_cost_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=SKU_COST_HEADERS)
 
 
+def normalize_store_name(value: object) -> str:
+    store = str(value or "").strip()
+    return SHOP_NAME_ALIASES.get(store, store)
+
+
+def normalize_store_column(data: pd.DataFrame, column: str = "店铺") -> pd.DataFrame:
+    if column not in data.columns:
+        return data
+    normalized = data.copy()
+    normalized[column] = normalized[column].map(normalize_store_name)
+    return normalized
+
+
 def load_sku_cost_frame(path: Path = SKU_COST_PATH) -> pd.DataFrame:
     if not path.exists():
         return _empty_sku_cost_frame()
@@ -331,7 +349,7 @@ def load_sku_cost_frame(path: Path = SKU_COST_PATH) -> pd.DataFrame:
         data[column] = pd.to_numeric(data[column], errors="coerce")
     for column in ["店铺", "商品ID", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
         data[column] = data[column].fillna("").astype(str)
-    return data
+    return normalize_store_column(data)
 
 
 def save_sku_cost_frame(data: pd.DataFrame, path: Path = SKU_COST_PATH) -> Path | None:
@@ -350,6 +368,7 @@ def save_sku_cost_frame(data: pd.DataFrame, path: Path = SKU_COST_PATH) -> Path 
     cleaned = cleaned[SKU_COST_HEADERS]
     for column in ["店铺", "商品ID", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
         cleaned[column] = cleaned[column].fillna("").astype(str).str.strip()
+    cleaned = normalize_store_column(cleaned)
     for column in ["单件货价", "快递费"]:
         cleaned[column] = pd.to_numeric(cleaned[column], errors="coerce").round(2)
 
@@ -682,11 +701,10 @@ def render_sku_cost_manager() -> None:
     metric_cols[3].metric("涉及店铺", f"{data['店铺'].replace('', pd.NA).dropna().nunique():,.0f}")
 
     filter_cols = st.columns([1, 1.2, 1])
-    default_store_options = ["易丽洁", "咖时光", "坐拥_宁静", "坐拥宁静", "国货严选"]
     stores = sorted(
         {
-            *default_store_options,
-            *[str(store).strip() for store in data["店铺"].dropna().unique() if str(store).strip()],
+            *DEFAULT_STORE_OPTIONS,
+            *[normalize_store_name(store) for store in data["店铺"].dropna().unique() if str(store).strip()],
         }
     )
     with filter_cols[0]:
