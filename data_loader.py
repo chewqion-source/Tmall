@@ -25,7 +25,7 @@ STORE_FILE_PATTERNS = {
 }
 LEGACY_SUMMARY_PRODUCT_ID = "全店汇总（早期格式）"
 MIN_REPORT_DATE = pd.Timestamp(2026, 7, 1)
-DISK_CACHE_SCHEMA_VERSION = "product-daily-v4"
+DISK_CACHE_SCHEMA_VERSION = "product-daily-v5"
 
 
 @dataclass(frozen=True)
@@ -289,6 +289,8 @@ def _extract_sheet(sheet: SheetData, year: int) -> list[dict[str, object]]:
     )
     profit_col = columns["单品结余"]
     sku_col = columns.get("货号")
+    pay_col = columns.get("支付金额")
+    refund_col = columns.get("成功退款金额")
 
     effective_ids: dict[int, str] = {}
     # Explicitly expand only merged product-ID regions. This is the key rule for
@@ -304,7 +306,7 @@ def _extract_sheet(sheet: SheetData, year: int) -> list[dict[str, object]]:
                     effective_ids[row_idx] = product_id
 
     records: list[dict[str, object]] = []
-    max_needed_col = max(product_col, quantity_col, profit_col, order_col or 0, sku_col or 0)
+    max_needed_col = max(product_col, quantity_col, profit_col, order_col or 0, sku_col or 0, pay_col or 0, refund_col or 0)
     for row_idx in range(header_idx + 1, len(sheet.rows)):
         row = sheet.rows[row_idx]
         if len(row) <= max_needed_col:
@@ -321,6 +323,8 @@ def _extract_sheet(sheet: SheetData, year: int) -> list[dict[str, object]]:
                 "sales_qty": _number(row[quantity_col]),
                 "order_count": _number(row[order_col]) if order_col is not None else 0.0,
                 "profit": _number(row[profit_col]),
+                "pay_amount": _number(row[pay_col]) if pay_col is not None else 0.0,
+                "refund_amount": _number(row[refund_col]) if refund_col is not None else 0.0,
                 "sku": sku,
                 "source_row": row_idx + 1,
             }
@@ -342,7 +346,9 @@ def _extract_legacy_sheet(
     quantity_col = columns["数量"]
     order_col = columns["快递单量"]
     profit_col = columns["结余"]
-    max_needed_col = max(sku_col, quantity_col, order_col, profit_col)
+    pay_col = columns.get("支付金额")
+    refund_col = columns.get("成功退款金额")
+    max_needed_col = max(sku_col, quantity_col, order_col, profit_col, pay_col or 0, refund_col or 0)
     records: list[dict[str, object]] = []
 
     for row_idx in range(header_idx + 1, len(sheet.rows)):
@@ -360,6 +366,8 @@ def _extract_legacy_sheet(
                 "sales_qty": _number(row[quantity_col]),
                 "order_count": _number(row[order_col]),
                 "profit": _number(row[profit_col]),
+                "pay_amount": _number(row[pay_col]) if pay_col is not None else 0.0,
+                "refund_amount": _number(row[refund_col]) if refund_col is not None else 0.0,
                 "sku": sku,
                 "source_row": row_idx + 1,
             }
@@ -385,6 +393,8 @@ def load_product_daily(path: str | Path) -> pd.DataFrame:
             sales_qty=("sales_qty", "sum"),
             order_count=("order_count", "sum"),
             profit=("profit", "sum"),
+            pay_amount=("pay_amount", "sum"),
+            refund_amount=("refund_amount", "sum"),
             sku_count=("sku", lambda values: len({v for v in values if v})),
             skus=("sku", lambda values: "、".join(dict.fromkeys(v for v in values if v))),
             source_rows=("source_row", lambda values: ",".join(map(str, values))),
@@ -394,6 +404,8 @@ def load_product_daily(path: str | Path) -> pd.DataFrame:
     daily["sales_qty"] = daily["sales_qty"].round(6)
     daily["order_count"] = daily["order_count"].round(6)
     daily["profit"] = daily["profit"].round(6)
+    daily["pay_amount"] = daily["pay_amount"].round(6)
+    daily["refund_amount"] = daily["refund_amount"].round(6)
     return daily
 
 
