@@ -106,6 +106,8 @@ def _build_message() -> dict[str, object]:
     sku = _sku_cost_summary()
 
     stores = snapshot["stores"]
+    store_count = len(stores)
+    store_scope = f"{store_count}店" if store_count else "多店"
     store_lines = []
     for _, row in stores.iterrows():
         store_lines.append(
@@ -118,7 +120,7 @@ def _build_message() -> dict[str, object]:
             "天猫实时盈亏抓取完成",
             f"更新时间：{snapshot['generated_at'] or datetime.now():}",
             f"商品记录：{snapshot['record_count']}",
-            f"三店实时盈亏：{_money(float(snapshot['total_profit']))}",
+            f"{store_scope}实时盈亏：{_money(float(snapshot['total_profit']))}",
             f"支付金额：{_money(float(snapshot['total_pay']))}",
             f"推广消耗：{_money(float(snapshot['total_ad']))}",
             "",

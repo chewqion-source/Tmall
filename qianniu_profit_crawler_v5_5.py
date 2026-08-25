@@ -1750,18 +1750,20 @@ def integrate_all_shops():
         print(
             f"SKU成本未匹配行：{unmatched}"
         )
+        store_count = combined["店铺"].dropna().astype(str).str.strip().nunique() if "店铺" in combined.columns else 0
+        store_scope = f"{store_count}店" if store_count else "多店"
 
         print(
-            f"三店支付金额：¥{total_sales:.2f}"
+            f"{store_scope}支付金额：¥{total_sales:.2f}"
         )
 
         print(
-            f"三店实时盈亏：¥{total_profit:.2f}"
+            f"{store_scope}实时盈亏：¥{total_profit:.2f}"
         )
 
         print()
         print(
-            "三店总表："
+            f"{store_scope}总表："
         )
 
         print(
@@ -1781,7 +1783,7 @@ def main():
     print()
     print("=" * 76)
     print(f"千牛多店铺实时盈亏 {VERSION}")
-    print("SKU本轮真实成本 + 当天退款成功 + 三店实时盈亏")
+    print("SKU本轮真实成本 + 当天退款成功 + 多店实时盈亏")
     print("=" * 76)
 
     # 1. SKU
