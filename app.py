@@ -120,6 +120,19 @@ def inject_dashboard_styles() -> None:
 .st-key-store_select_4 button {
     min-height: 38px;
 }
+[data-testid="stSidebar"] h2 {
+    font-size: 16px;
+    text-align: center;
+    background: #d9d9d9;
+    border: 1px solid #bdbdbd;
+    padding: 7px 8px;
+    margin-bottom: 18px;
+}
+[data-testid="stSidebar"] .stButton button,
+[data-testid="stSidebar"] a {
+    border-radius: 999px;
+    font-weight: 700;
+}
 .metric-card {
     min-height: 94px;
     border: 1px solid #dbe3ef;
@@ -152,7 +165,7 @@ def inject_dashboard_styles() -> None:
 }
 .metric-value {
     color: #0f172a;
-    font-size: 23px;
+    font-size: 21px;
     line-height: 1.15;
     font-weight: 760;
     letter-spacing: 0;
@@ -1582,11 +1595,11 @@ def render_product_overview_section(
 
 
 with st.sidebar:
-    st.header("店铺与数据")
+    st.header("运营数据看板")
     page_param = str(st.query_params.get("page", "dashboard"))
     page_mode = "SKU成本维护" if page_param == "sku-cost" else "日报看板"
     if st.button(
-        "店铺数据",
+        "店铺与商品",
         type="primary" if page_mode == "日报看板" else "secondary",
         width=168,
     ):
@@ -1599,10 +1612,10 @@ with st.sidebar:
     ):
         st.query_params["page"] = "sku-cost"
         st.rerun()
-    sidebar_link("财务上传报表", upload_url())
+    sidebar_link("财务报表上传", upload_url())
     sidebar_link("投产计算器", roi_url())
     sidebar_link("达人管理", koc_url())
-    sidebar_link("AI 生图", ai_image_url())
+    sidebar_link("AI生图", ai_image_url())
 
 inject_dashboard_styles()
 
@@ -1628,7 +1641,7 @@ except Exception as exc:
 
 title_col, refresh_col = st.columns([5, 1], vertical_alignment="center")
 with title_col:
-    st.title("店铺数据")
+    st.title("店铺与商品")
 with refresh_col:
     if st.button("↻", type="primary", key="refresh_data_icon", help="刷新数据"):
         st.cache_data.clear()
