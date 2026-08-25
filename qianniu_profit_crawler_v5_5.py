@@ -1465,6 +1465,16 @@ def _snapshot_optional_number(row, column):
     )
 
 
+def _snapshot_ratio(numerator, denominator):
+    try:
+        denominator = float(denominator)
+        if abs(denominator) < 1e-9:
+            return None
+        return float(numerator) / denominator
+    except Exception:
+        return None
+
+
 def write_realtime_snapshot(df):
     snapshot_dir = (
         DATA_ROOT
@@ -1475,6 +1485,22 @@ def write_realtime_snapshot(df):
         parents=True,
         exist_ok=True
     )
+
+    latest = (
+        snapshot_dir
+        /
+        "latest.json"
+    )
+    previous_payload = {}
+    if latest.exists():
+        try:
+            previous_payload = json.loads(
+                latest.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except Exception:
+            previous_payload = {}
 
     generated_at = datetime.now().strftime(
         "%Y-%m-%d %H:%M:%S"
@@ -1493,6 +1519,13 @@ def write_realtime_snapshot(df):
         )
         date_text = captured_at[:10]
 
+        pay_amount = _snapshot_number(row, "支付金额")
+        ad_cost = _snapshot_number(row, "总推广消耗")
+        profit = _snapshot_number(row, "实时盈亏")
+        break_even_ad_cost = ad_cost + profit
+        current_roi = _snapshot_ratio(profit, ad_cost)
+        break_even_roi = _snapshot_ratio(pay_amount, break_even_ad_cost) if break_even_ad_cost > 0 else None
+
         records.append(
             {
                 "store": str(row.get("店铺", "")),
@@ -1500,13 +1533,15 @@ def write_realtime_snapshot(df):
                 "product_id": normalize_id(row.get("商品ID", "")),
                 "product_name": str(row.get("商品名称", "")),
                 "sales_qty": _snapshot_number(row, "支付件数"),
-                "pay_amount": _snapshot_number(row, "支付金额"),
+                "pay_amount": pay_amount,
                 "site_ad_cost": _snapshot_number(row, "全站推广消耗"),
                 "keyword_ad_cost": _snapshot_number(row, "关键词推广消耗"),
-                "ad_cost": _snapshot_number(row, "总推广消耗"),
+                "ad_cost": ad_cost,
                 "promotion_roi": _snapshot_optional_number(row, "推广后台ROI"),
                 "site_promotion_roi": _snapshot_optional_number(row, "全站推广ROI"),
                 "keyword_promotion_roi": _snapshot_optional_number(row, "关键词推广ROI"),
+                "current_roi": current_roi,
+                "break_even_roi": break_even_roi,
                 "order_count": _snapshot_number(row, "SKU订单数"),
                 "sku_count": _snapshot_number(row, "SKU成交件数"),
                 "merch_cost": _snapshot_number(row, "货品成本"),
@@ -1516,7 +1551,7 @@ def write_realtime_snapshot(df):
                 "estimated_marketing_cost": _snapshot_number(row, "预估营销托管费用"),
                 "refund_amount": _snapshot_number(row, "退款金额"),
                 "gross_profit": _snapshot_number(row, "销售毛利"),
-                "profit": _snapshot_number(row, "实时盈亏"),
+                "profit": profit,
                 "unmatched_sku_rows": _snapshot_number(row, "SKU成本未匹配行数"),
                 "date": date_text,
             }
@@ -1524,15 +1559,27 @@ def write_realtime_snapshot(df):
 
     payload = {
         "generated_at": generated_at,
+        "previous_generated_at": previous_payload.get("generated_at", ""),
+        "previous_records": previous_payload.get("records", []),
         "source": Path(__file__).name,
         "records": records,
     }
 
-    latest = (
+    previous_file = (
         snapshot_dir
         /
-        "latest.json"
+        "previous.json"
     )
+    if previous_payload:
+        previous_file.write_text(
+            json.dumps(
+                previous_payload,
+                ensure_ascii=False,
+                indent=2
+            ),
+            encoding="utf-8"
+        )
+
     latest.write_text(
         json.dumps(
             payload,
