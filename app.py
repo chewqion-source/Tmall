@@ -121,11 +121,11 @@ def inject_dashboard_styles() -> None:
     min-height: 38px;
 }
 .metric-card {
-    min-height: 116px;
+    min-height: 94px;
     border: 1px solid #dbe3ef;
     border-radius: 10px;
     padding: 14px 16px;
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    background: #f3f4f6;
     box-shadow: 0 8px 22px rgba(15, 23, 42, .06);
 }
 .metric-card.store {
@@ -144,7 +144,7 @@ def inject_dashboard_styles() -> None:
     background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
 }
 .metric-label {
-    color: #64748b;
+    color: #334155;
     font-size: 13px;
     line-height: 1.25;
     margin-bottom: 10px;
@@ -152,7 +152,7 @@ def inject_dashboard_styles() -> None:
 }
 .metric-value {
     color: #0f172a;
-    font-size: 24px;
+    font-size: 23px;
     line-height: 1.15;
     font-weight: 760;
     letter-spacing: 0;
@@ -167,7 +167,7 @@ def inject_dashboard_styles() -> None:
     margin-top: 10px;
     padding: 3px 8px;
     border-radius: 999px;
-    background: #eef2ff;
+    background: transparent;
     color: #475569;
     font-size: 12px;
     font-weight: 650;
@@ -182,6 +182,102 @@ def inject_dashboard_styles() -> None:
 }
 .metric-section-gap {
     height: 10px;
+}
+.section-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 24px 0 10px;
+}
+.section-title-row h2 {
+    margin: 0;
+    font-size: 30px;
+    line-height: 1.15;
+}
+.section-title-row .section-subtitle {
+    color: #64748b;
+    font-size: 13px;
+    margin-top: 6px;
+}
+.inline-action button {
+    min-height: 38px;
+    border-radius: 8px;
+}
+.rank-panel {
+    background: #f3f4f6;
+    border-radius: 8px;
+    padding: 18px 16px;
+    min-height: 230px;
+}
+.rank-title {
+    font-weight: 760;
+    font-size: 16px;
+    margin-bottom: 14px;
+}
+.rank-row {
+    display: grid;
+    grid-template-columns: minmax(130px, 210px) 1fr 76px;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+    font-size: 12px;
+}
+.rank-name {
+    color: #334155;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rank-track {
+    height: 16px;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+}
+.rank-fill {
+    height: 100%;
+    min-width: 2px;
+}
+.rank-value {
+    text-align: right;
+    color: #0f172a;
+    font-variant-numeric: tabular-nums;
+}
+.svg-chart-card {
+    background: #f3f4f6;
+    border-radius: 8px;
+    padding: 18px 16px 12px;
+    min-height: 300px;
+}
+.svg-chart-title {
+    font-weight: 760;
+    font-size: 16px;
+    margin-bottom: 10px;
+}
+.svg-chart-card svg {
+    width: 100%;
+    height: 244px;
+    display: block;
+}
+.svg-chart-label {
+    fill: #64748b;
+    font-size: 11px;
+}
+.svg-chart-legend {
+    display: flex;
+    justify-content: flex-end;
+    gap: 14px;
+    color: #475569;
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+.legend-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    margin-right: 5px;
 }
 </style>
 """,
@@ -233,6 +329,22 @@ def metric_card(label: str, value: str, delta: str | None = None, tone: str = "n
     )
 
 
+def section_heading(title: str, subtitle: str | None = None, right_html: str = "") -> None:
+    subtitle_html = f'<div class="section-subtitle">{escape(subtitle)}</div>' if subtitle else ""
+    st.markdown(
+        f"""
+<div class="section-title-row">
+    <div>
+        <h2>{escape(title)}</h2>
+        {subtitle_html}
+    </div>
+    <div>{right_html}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def profit_tone(value: float) -> str:
     if value > 0:
         return "good"
@@ -261,6 +373,67 @@ def render_store_button_filter(stores: list[str], key_prefix: str = "store_selec
                 st.session_state["selected_store"] = store
                 st.rerun()
     return current_store
+
+
+def _range_days(range_label: str) -> int:
+    return {
+        "今日": 1,
+        "昨日": 1,
+        "3天": 3,
+        "7天": 7,
+        "15天": 15,
+        "近一个月": 30,
+        "近半年": 183,
+    }.get(range_label, 30)
+
+
+def _period_window(data: pd.DataFrame, range_label: str) -> tuple[pd.Timestamp, pd.Timestamp]:
+    if data.empty:
+        today = pd.Timestamp.today().normalize()
+        return today, today
+    latest_date = data["date"].max()
+    days = _range_days(range_label)
+    if range_label == "昨日":
+        end_date = latest_date - pd.Timedelta(days=1)
+        start_date = end_date
+    else:
+        end_date = latest_date
+        start_date = latest_date - pd.Timedelta(days=days - 1)
+    return start_date, end_date
+
+
+def _metric_delta(current: float, previous: float) -> str:
+    if previous == 0:
+        if current == 0:
+            return "0.0%"
+        return "+100.0%"
+    return f"{(current - previous) / abs(previous) * 100:+.1f}%"
+
+
+def _aggregate_period(data: pd.DataFrame, start_date: pd.Timestamp, end_date: pd.Timestamp) -> dict[str, float]:
+    if data.empty:
+        return {"sales_qty": 0.0, "order_count": 0.0, "profit": 0.0, "products": 0.0}
+    rows = data[(data["date"] >= start_date) & (data["date"] <= end_date)]
+    return {
+        "sales_qty": float(rows["sales_qty"].sum()),
+        "order_count": float(rows["order_count"].sum()),
+        "profit": float(rows["profit"].sum()),
+        "products": float(rows["product_id"].nunique()),
+    }
+
+
+def _period_metrics(data: pd.DataFrame, range_label: str) -> tuple[dict[str, float], dict[str, str]]:
+    start_date, end_date = _period_window(data, range_label)
+    days = max((end_date - start_date).days + 1, 1)
+    current = _aggregate_period(data, start_date, end_date)
+    prev_end = start_date - pd.Timedelta(days=1)
+    prev_start = prev_end - pd.Timedelta(days=days - 1)
+    previous = _aggregate_period(data, prev_start, prev_end)
+    deltas = {
+        key: _metric_delta(current[key], previous[key])
+        for key in ["sales_qty", "order_count", "profit", "products"]
+    }
+    return current, deltas
 
 
 def render_overview_metrics(
@@ -461,7 +634,18 @@ def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.Data
     if not required.issubset(data.columns):
         return pd.DataFrame(), payload.get("generated_at")
     data["date"] = pd.to_datetime(data["date"], errors="coerce")
-    for column in ["sales_qty", "order_count", "profit"]:
+    numeric_columns = [
+        "sales_qty",
+        "order_count",
+        "profit",
+        "pay_amount",
+        "ad_cost",
+        "refund_amount",
+        "sku_count",
+    ]
+    for column in numeric_columns:
+        if column not in data.columns:
+            data[column] = 0
         data[column] = pd.to_numeric(data[column], errors="coerce").fillna(0)
     data["product_id"] = data["product_id"].astype(str)
     if "product_name" not in data.columns:
@@ -580,15 +764,29 @@ def render_profit_advice_floating(realtime_daily: pd.DataFrame, all_daily: pd.Da
 
 
 def render_changes_table(selected: pd.DataFrame) -> None:
-    st.subheader("销量 / 盈亏日环比变化")
+    st.subheader("商品订单数 / 盈亏日环比变化")
     changes = selected[
-        ["sheet", "sales_qty", "sales_change", "sales_change_pct", "profit", "profit_change", "profit_change_pct"]
+        [
+            "sheet",
+            "order_count",
+            "orders_change",
+            "orders_change_pct",
+            "sales_qty",
+            "sales_change",
+            "sales_change_pct",
+            "profit",
+            "profit_change",
+            "profit_change_pct",
+        ]
     ].rename(
         columns={
             "sheet": "日期",
-            "sales_qty": "销量",
-            "sales_change": "销量日增减",
-            "sales_change_pct": "销量日环比",
+            "order_count": "订单数",
+            "orders_change": "订单数日增减",
+            "orders_change_pct": "订单数日环比",
+            "sales_qty": "件数",
+            "sales_change": "件数日增减",
+            "sales_change_pct": "件数日环比",
             "profit": "盈亏",
             "profit_change": "盈亏日增减",
             "profit_change_pct": "盈亏变化率",
@@ -596,9 +794,12 @@ def render_changes_table(selected: pd.DataFrame) -> None:
     )
     styled_changes = changes.style.map(color_profit, subset=["盈亏", "盈亏日增减"]).format(
         {
-            "销量": "{:,.0f}",
-            "销量日增减": lambda value: "—" if pd.isna(value) else f"{value:+,.0f}",
-            "销量日环比": lambda value: "—" if pd.isna(value) else f"{value:+.1%}",
+            "订单数": "{:,.0f}",
+            "订单数日增减": lambda value: "—" if pd.isna(value) else f"{value:+,.0f}",
+            "订单数日环比": lambda value: "—" if pd.isna(value) else f"{value:+.1%}",
+            "件数": "{:,.0f}",
+            "件数日增减": lambda value: "—" if pd.isna(value) else f"{value:+,.0f}",
+            "件数日环比": lambda value: "—" if pd.isna(value) else f"{value:+.1%}",
             "盈亏": "{:+,.2f}",
             "盈亏日增减": lambda value: "—" if pd.isna(value) else f"{value:+,.2f}",
             "盈亏变化率": lambda value: "—" if pd.isna(value) else f"{value:+.1%}",
@@ -890,56 +1091,118 @@ def filter_trend_range(data: pd.DataFrame, range_label: str) -> pd.DataFrame:
     return filtered if not filtered.empty else data.tail(1)
 
 
+def _line_points(values: list[float], width: int, height: int, pad: int) -> str:
+    if not values:
+        return ""
+    low = min(values)
+    high = max(values)
+    span = high - low if high != low else max(abs(high), 1.0)
+    step = (width - pad * 2) / max(len(values) - 1, 1)
+    points = []
+    for index, value in enumerate(values):
+        x = pad + index * step
+        y = pad + (high - value) / span * (height - pad * 2)
+        points.append(f"{x:.1f},{y:.1f}")
+    return " ".join(points)
+
+
+def _chart_ticks(data: pd.DataFrame) -> list[tuple[float, str]]:
+    if data.empty:
+        return []
+    dates = data["date"].tolist()
+    indexes = sorted({0, len(dates) // 2, len(dates) - 1})
+    width = 640
+    pad = 44
+    step = (width - pad * 2) / max(len(dates) - 1, 1)
+    return [(pad + index * step, pd.Timestamp(dates[index]).strftime("%m-%d")) for index in indexes]
+
+
 def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360) -> None:
-    sales_fig = make_subplots(specs=[[{"secondary_y": True}]])
-    sales_fig.add_trace(
-        go.Scatter(
-            x=data["date"],
-            y=data["sales_qty"],
-            name="销量",
-            mode="lines+markers",
-            line=dict(color="#2563eb", width=3),
-            marker=dict(size=7),
-            hovertemplate="销量 %{y:,.0f}<extra></extra>",
-        ),
-        secondary_y=False,
+    del height
+    if data.empty:
+        st.markdown(
+            f'<div class="svg-chart-card"><div class="svg-chart-title">{escape(title)}</div>暂无数据</div>',
+            unsafe_allow_html=True,
+        )
+        return
+    data = data.sort_values("date").tail(60)
+    width, chart_height, pad = 640, 244, 44
+    sales_values = [float(value) for value in data["sales_qty"]]
+    order_values = [float(value) for value in data["order_count"]]
+    sales_points = _line_points(sales_values, width, chart_height, pad)
+    order_points = _line_points(order_values, width, chart_height, pad)
+    tick_html = "".join(
+        f'<text x="{x:.1f}" y="232" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
+        for x, label in _chart_ticks(data)
     )
-    sales_fig.add_trace(
-        go.Scatter(
-            x=data["date"],
-            y=data["order_count"],
-            name="订单量",
-            mode="lines+markers",
-            line=dict(color="#f59e0b", width=3, dash="dot"),
-            marker=dict(size=7),
-            hovertemplate="订单量 %{y:,.0f}<extra></extra>",
-        ),
-        secondary_y=True,
+    max_sales = max(sales_values) if sales_values else 0
+    max_orders = max(order_values) if order_values else 0
+    st.markdown(
+        f"""
+<div class="svg-chart-card">
+  <div class="svg-chart-title">{escape(title)}</div>
+  <div class="svg-chart-legend">
+    <span><i class="legend-dot" style="background:#2563eb"></i>件数</span>
+    <span><i class="legend-dot" style="background:#f59e0b"></i>订单数</span>
+  </div>
+  <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="none">
+    <line x1="{pad}" y1="202" x2="610" y2="202" stroke="#cbd5e1" stroke-width="1" />
+    <line x1="{pad}" y1="36" x2="610" y2="36" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="119" x2="610" y2="119" stroke="#e2e8f0" stroke-width="1" />
+    <polyline fill="none" stroke="#2563eb" stroke-width="3" points="{sales_points}" />
+    <polyline fill="none" stroke="#f59e0b" stroke-width="3" stroke-dasharray="6 5" points="{order_points}" />
+    <text x="{pad}" y="28" class="svg-chart-label">件数最高 {max_sales:,.0f}</text>
+    <text x="610" y="28" text-anchor="end" class="svg-chart-label">订单最高 {max_orders:,.0f}</text>
+    {tick_html}
+  </svg>
+</div>
+""",
+        unsafe_allow_html=True,
     )
-    sales_fig.update_xaxes(title_text="")
-    sales_fig.update_yaxes(title_text="销量", secondary_y=False)
-    sales_fig.update_yaxes(title_text="订单", secondary_y=True, rangemode="tozero")
-    style_chart_card(sales_fig, title, height)
-    sales_fig.update_layout(hovermode="x unified")
-    st.plotly_chart(sales_fig, width="stretch")
 
 
 def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360) -> None:
-    profit_colors = ["#16a34a" if value >= 0 else "#dc2626" for value in data["profit"]]
-    profit_fig = go.Figure(
-        go.Bar(
-            x=data["date"],
-            y=data["profit"],
-            marker_color=profit_colors,
-            text=[f"{value:+.2f}" for value in data["profit"]],
-            textposition="outside",
-            hovertemplate="日期 %{x|%m-%d}<br>盈亏 ¥%{y:,.2f}<extra></extra>",
+    del height
+    if data.empty:
+        st.markdown(
+            f'<div class="svg-chart-card"><div class="svg-chart-title">{escape(title)}</div>暂无数据</div>',
+            unsafe_allow_html=True,
         )
+        return
+    data = data.sort_values("date").tail(60)
+    values = [float(value) for value in data["profit"]]
+    width, chart_height, pad = 640, 244, 44
+    max_abs = max(max(abs(value) for value in values), 1.0)
+    baseline = 119
+    step = (width - pad * 2) / max(len(values), 1)
+    bar_width = max(min(step * 0.68, 18), 4)
+    bars = []
+    for index, value in enumerate(values):
+        x = pad + index * step + (step - bar_width) / 2
+        bar_height = abs(value) / max_abs * 78
+        y = baseline - bar_height if value >= 0 else baseline
+        color = "#16a34a" if value >= 0 else "#dc2626"
+        bars.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height:.1f}" fill="{color}" rx="2" />')
+    tick_html = "".join(
+        f'<text x="{x:.1f}" y="232" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
+        for x, label in _chart_ticks(data)
     )
-    profit_fig.add_hline(y=0, line_color="#64748b", line_width=1)
-    style_chart_card(profit_fig, title, height)
-    profit_fig.update_layout(xaxis_title="", yaxis_title="盈亏", showlegend=False)
-    st.plotly_chart(profit_fig, width="stretch")
+    st.markdown(
+        f"""
+<div class="svg-chart-card">
+  <div class="svg-chart-title">{escape(title)}</div>
+  <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="none">
+    <line x1="{pad}" y1="{baseline}" x2="610" y2="{baseline}" stroke="#64748b" stroke-width="1" />
+    <line x1="{pad}" y1="36" x2="610" y2="36" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="202" x2="610" y2="202" stroke="#e2e8f0" stroke-width="1" />
+    {''.join(bars)}
+    <text x="{pad}" y="28" class="svg-chart-label">最大波动 {_format_money(max_abs)}</text>
+    {tick_html}
+  </svg>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 def _product_axis_label(product_id: object) -> str:
@@ -951,6 +1214,45 @@ def _product_axis_label(product_id: object) -> str:
 
 def _format_money(value: float) -> str:
     return f"¥{value:,.2f}"
+
+
+def _render_rank_bar_list(data: pd.DataFrame, title: str, color: str, empty_text: str) -> None:
+    if data.empty:
+        st.markdown(
+            f"""
+<div class="rank-panel">
+    <div class="rank-title">{escape(title)}</div>
+    <div class="rank-name">{escape(empty_text)}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        return
+
+    max_value = max(float(data["实时盈亏"].abs().max()), 1.0)
+    rows_html = []
+    for _, row in data.iterrows():
+        value = float(row["实时盈亏"])
+        width = max(abs(value) / max_value * 100, 1.5)
+        label = f"{row['店铺']} #{int(row['排名'])} {row['商品ID']}"
+        rows_html.append(
+            f"""
+<div class="rank-row">
+    <div class="rank-name" title="{escape(label)}">{escape(label)}</div>
+    <div class="rank-track"><div class="rank-fill" style="width:{width:.1f}%; background:{color};"></div></div>
+    <div class="rank-value">{escape(_format_money(value))}</div>
+</div>
+"""
+        )
+    st.markdown(
+        f"""
+<div class="rank-panel">
+    <div class="rank-title">{escape(title)}</div>
+    {''.join(rows_html)}
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_product_rank_chart(
@@ -1151,6 +1453,134 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
             )
 
 
+def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.DataFrame, generated_at: str | None) -> None:
+    st.markdown("## 实时数据")
+    st.caption(f"更新时间 {generated_at}" if generated_at else "暂无实时快照")
+    source = realtime_daily if not realtime_daily.empty else all_daily
+    latest_date = source["date"].max()
+    latest_rows = source[source["date"] == latest_date].copy()
+
+    pay_total = float(latest_rows["pay_amount"].sum()) if "pay_amount" in latest_rows.columns else 0.0
+    refund_total = float(latest_rows["refund_amount"].sum()) if "refund_amount" in latest_rows.columns else 0.0
+    order_total = float(latest_rows["order_count"].sum())
+    sales_total = float(latest_rows["sales_qty"].sum())
+    profit_total = float(latest_rows["profit"].sum())
+    refund_rate = refund_total / pay_total if pay_total else 0.0
+
+    metric_cols = st.columns(6)
+    cards = [
+        ("支付金额", _format_money(pay_total), "小时环比 --", "neutral"),
+        ("订单数", f"{order_total:,.0f}", "小时环比 --", "neutral"),
+        ("件数", f"{sales_total:,.0f}", "小时环比 --", "neutral"),
+        ("盈亏", _format_money(profit_total), "小时环比 --", profit_tone(profit_total)),
+        ("退款金额", _format_money(refund_total), "小时环比 --", "neutral"),
+        ("退款率", f"{refund_rate:.1%}", "小时环比 --", "neutral"),
+    ]
+    for column, (label, value, delta, tone) in zip(metric_cols, cards):
+        with column:
+            metric_card(label, value, delta, tone)
+
+    product_daily = (
+        latest_rows.groupby(["store", "product_id"], as_index=False)
+        .agg(
+            销量=("sales_qty", "sum"),
+            订单量=("order_count", "sum"),
+            实时盈亏=("profit", "sum"),
+        )
+    )
+    profit_rank = (
+        product_daily[product_daily["实时盈亏"] > 0]
+        .sort_values("实时盈亏", ascending=False)
+        .head(5)
+        .rename(columns={"store": "店铺", "product_id": "商品ID"})
+        .copy()
+    )
+    profit_rank.insert(2, "排名", range(1, len(profit_rank) + 1))
+    loss_rank = (
+        product_daily[product_daily["实时盈亏"] < 0]
+        .sort_values("实时盈亏", ascending=True)
+        .head(5)
+        .rename(columns={"store": "店铺", "product_id": "商品ID"})
+        .copy()
+    )
+    loss_rank.insert(2, "排名", range(1, len(loss_rank) + 1))
+    profit_col, loss_col = st.columns(2)
+    with profit_col:
+        _render_rank_bar_list(
+            profit_rank,
+            "盈利产品 TOP5",
+            "#16a34a",
+            "暂无盈利产品",
+        )
+    with loss_col:
+        _render_rank_bar_list(
+            loss_rank,
+            "亏损产品 TOP5",
+            "#dc2626",
+            "暂无亏损产品",
+        )
+
+
+def render_store_overview_section(
+    selected_store: str,
+    store_daily: pd.DataFrame,
+    trend_range: str,
+    trend_store: pd.DataFrame,
+) -> None:
+    current, deltas = _period_metrics(store_daily, trend_range)
+    metric_cols = st.columns(6)
+    cards = [
+        ("订单数", f"{current['order_count']:,.0f}", deltas["order_count"], "neutral"),
+        ("件数", f"{current['sales_qty']:,.0f}", deltas["sales_qty"], "neutral"),
+        ("盈亏", _format_money(current["profit"]), deltas["profit"], profit_tone(current["profit"])),
+        ("商品数", f"{current['products']:,.0f}", deltas["products"], "neutral"),
+        ("日均订单数", f"{current['order_count'] / max(_range_days(trend_range), 1):,.1f}", deltas["order_count"], "neutral"),
+        ("日均盈亏", _format_money(current["profit"] / max(_range_days(trend_range), 1)), deltas["profit"], profit_tone(current["profit"])),
+    ]
+    for column, (label, value, delta, tone) in zip(metric_cols, cards):
+        with column:
+            metric_card(label, value, delta, tone)
+
+    chart_cols = st.columns(2)
+    with chart_cols[0]:
+        render_sales_orders_trend(trend_store, "订单数与件数折线图", height=300)
+    with chart_cols[1]:
+        render_profit_trend(trend_store, "盈亏柱状趋势图", height=300)
+
+
+def render_product_overview_section(
+    selected: pd.DataFrame,
+    selected_summary: pd.Series,
+    latest: pd.Series,
+    trend_range: str,
+    trend_selected: pd.DataFrame,
+) -> None:
+    current, deltas = _period_metrics(selected, trend_range)
+    total_profit = float(selected_summary["total_profit"])
+    latest_profit = float(latest["profit"])
+    latest_sales_delta = signed(float(latest["sales_change"]), 0) if pd.notna(latest["sales_change"]) else None
+    latest_profit_delta = signed(float(latest["profit_change"])) if pd.notna(latest["profit_change"]) else None
+
+    metric_cols = st.columns(6)
+    cards = [
+        ("订单数", f"{current['order_count']:,.0f}", deltas["order_count"], "neutral"),
+        ("件数", f"{current['sales_qty']:,.0f}", deltas["sales_qty"], "neutral"),
+        ("盈亏", _format_money(current["profit"]), deltas["profit"], profit_tone(current["profit"])),
+        ("累计盈亏", _format_money(total_profit), signed(total_profit), profit_tone(total_profit)),
+        ("最新件数", f"{float(latest['sales_qty']):,.0f}", latest_sales_delta, "neutral"),
+        ("最新盈亏", _format_money(latest_profit), latest_profit_delta, profit_tone(latest_profit)),
+    ]
+    for column, (label, value, delta, tone) in zip(metric_cols, cards):
+        with column:
+            metric_card(label, value, delta, tone)
+
+    chart_cols = st.columns(2)
+    with chart_cols[0]:
+        render_sales_orders_trend(trend_selected, "单品订单数与件数折线图", height=300)
+    with chart_cols[1]:
+        render_profit_trend(trend_selected, "单品盈亏柱状趋势图", height=300)
+
+
 with st.sidebar:
     st.header("店铺与数据")
     page_param = str(st.query_params.get("page", "dashboard"))
@@ -1213,17 +1643,41 @@ data_note = (
 st.caption(data_note)
 render_realtime_agent_panel()
 
-st.subheader("筛选")
-selected_store = render_store_button_filter(list(sources))
+rank_source = realtime_daily if not realtime_daily.empty else all_daily
+render_realtime_data_section(realtime_daily, all_daily, realtime_generated_at)
+
+st.markdown("## 店铺概览")
+store_filter_cols = st.columns([1.2, 1.2, 2.6])
+with store_filter_cols[0]:
+    selected_store = st.selectbox("店铺名称", list(sources), index=0)
+with store_filter_cols[1]:
+    trend_range = st.selectbox("选择时间", TREND_RANGE_OPTIONS, index=5, key="store_trend_range")
 store_daily = all_daily[all_daily["store"] == selected_store].copy()
 complete = complete_daily_series(store_daily)
 summary = build_summary(store_daily, complete)
 products = summary["product_id"].tolist()
-filter_cols = st.columns([1.6, 1])
-with filter_cols[0]:
+
+store_trend = (
+    store_daily.groupby(["date", "sheet"], as_index=False)
+    .agg(sales_qty=("sales_qty", "sum"), order_count=("order_count", "sum"), profit=("profit", "sum"))
+    .sort_values("date", ignore_index=True)
+)
+trend_store = filter_trend_range(store_trend, trend_range)
+render_store_overview_section(selected_store, store_daily, trend_range, trend_store)
+
+product_heading_cols = st.columns([4, 1], vertical_alignment="center")
+with product_heading_cols[0]:
+    st.markdown("## 商品概览")
+with product_heading_cols[1]:
+    if st.button("SKU成本维护", type="secondary", width="stretch"):
+        st.query_params["page"] = "sku-cost"
+        st.rerun()
+
+product_filter_cols = st.columns([1.8, 1.2, 2])
+with product_filter_cols[0]:
     selected_product = st.selectbox("商品 ID", products, index=0)
-with filter_cols[1]:
-    trend_range = st.selectbox("趋势日期范围", TREND_RANGE_OPTIONS, index=5)
+with product_filter_cols[1]:
+    product_trend_range = st.selectbox("选择时间", TREND_RANGE_OPTIONS, index=5, key="product_trend_range")
 
 if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
     st.warning(
@@ -1232,45 +1686,12 @@ if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
     )
 
 selected = complete[complete["product_id"] == selected_product].copy().sort_values("date")
-trend_selected = filter_trend_range(selected, trend_range)
+trend_selected = filter_trend_range(selected, product_trend_range)
 selected_summary = summary[summary["product_id"] == selected_product].iloc[0]
 latest = selected.iloc[-1]
-store_trend = (
-    store_daily.groupby(["date", "sheet"], as_index=False)
-    .agg(sales_qty=("sales_qty", "sum"), order_count=("order_count", "sum"), profit=("profit", "sum"))
-    .sort_values("date", ignore_index=True)
-)
-trend_store = filter_trend_range(store_trend, trend_range)
+render_product_overview_section(selected, selected_summary, latest, product_trend_range, trend_selected)
 
-render_overview_metrics(
-    selected_store,
-    selected_product,
-    store_daily,
-    selected_summary,
-    latest,
-    realtime_daily,
-)
-
-st.subheader(f"核心趋势（{trend_range}）")
-chart_cols = st.columns(4)
-with chart_cols[0]:
-    render_sales_orders_trend(trend_store, "累计销量趋势", height=300)
-with chart_cols[1]:
-    render_profit_trend(trend_store, "累计盈亏趋势", height=300)
-with chart_cols[2]:
-    render_sales_orders_trend(trend_selected, "单品最新销量趋势", height=300)
-with chart_cols[3]:
-    render_profit_trend(trend_selected, "单品最新盈亏趋势", height=300)
-
-rank_source = realtime_daily if not realtime_daily.empty else all_daily
-rank_tab, detail_tab, compare_tab = st.tabs(["商品排行", "单品明细", "全店对比"])
-with rank_tab:
-    render_latest_product_extremes(rank_source)
-with detail_tab:
-    render_changes_table(selected)
-    render_product_summary_table(summary, selected_store)
-with compare_tab:
-    render_latest_store_snapshot(rank_source)
-    render_store_overview_table(all_daily)
+render_changes_table(selected)
+render_product_summary_table(summary, selected_store)
 
 render_profit_advice_floating(realtime_daily, all_daily)

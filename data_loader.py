@@ -491,11 +491,14 @@ def complete_daily_series(daily: pd.DataFrame) -> pd.DataFrame:
     complete["profit"] = complete["profit"].fillna(0.0)
     complete["sheet"] = complete["date"].dt.strftime("%-m.%-d") if __import__("os").name != "nt" else complete["date"].apply(lambda d: f"{d.month}.{d.day}")
     complete["sales_change"] = complete.groupby("product_id")["sales_qty"].diff()
+    complete["orders_change"] = complete.groupby("product_id")["order_count"].diff()
     complete["profit_change"] = complete.groupby("product_id")["profit"].diff()
 
     previous_sales = complete.groupby("product_id")["sales_qty"].shift()
+    previous_orders = complete.groupby("product_id")["order_count"].shift()
     previous_profit = complete.groupby("product_id")["profit"].shift()
     complete["sales_change_pct"] = complete["sales_change"].div(previous_sales.where(previous_sales != 0))
+    complete["orders_change_pct"] = complete["orders_change"].div(previous_orders.where(previous_orders != 0))
     complete["profit_change_pct"] = complete["profit_change"].div(previous_profit.abs().where(previous_profit != 0))
     return complete
 
