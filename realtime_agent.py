@@ -234,7 +234,24 @@ def run_pipeline(reason: str, task: dict[str, object] | None = None, skip_login:
 
             msvcrt.locking(lock_stream.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
-            update_status("skipped", reason=reason, run_id=run_id, message="上一轮抓取仍在运行，已跳过")
+            message = "local crawler is busy; this manual task will retry automatically"
+            hint = local_run_hint()
+            update_status(
+                "busy",
+                reason=reason,
+                run_id=run_id,
+                message=message,
+                active_process=hint,
+                retry_after_seconds=POLL_SECONDS,
+            )
+            if task:
+                update_task(
+                    task,
+                    "pending",
+                    message=message,
+                    active_process=hint,
+                    retry_after_seconds=POLL_SECONDS,
+                )
             return 0
 
         login_step = "login check skipped" if skip_login else "login check"
@@ -302,6 +319,40 @@ def parse_dt(value: object) -> datetime | None:
         return None
 
 
+def is_stale_time(value: object, minutes: int) -> bool:
+    parsed = parse_dt(value)
+    if parsed is None:
+        return False
+    return datetime.now() - parsed >= timedelta(minutes=minutes)
+
+
+def local_run_hint() -> str:
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                (
+                    "Get-CimInstance Win32_Process | "
+                    "Where-Object { $_.CommandLine -match "
+                    "'qianniu_profit_crawler_v5_5.py|run_scheduled_realtime|--run-now' } | "
+                    "Select-Object -First 5 -ExpandProperty CommandLine"
+                ),
+            ],
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return " | ".join(lines)[:500]
+    except Exception as exc:
+        return f"unable to inspect local process: {exc}"
+
+
 def should_run_scheduled(state: dict[str, object]) -> bool:
     last = parse_dt(state.get("last_scheduled_at"))
     if last is None:
@@ -320,6 +371,15 @@ def poll_once() -> None:
     if task and task.get("action") == "run_realtime":
         task_status = str(task.get("status") or "pending")
         task_id = str(task.get("id") or "")
+        if (
+            task_status == "running"
+            and task_id
+            and state.get("last_task_id") != task_id
+            and is_stale_time(task.get("updated_at") or task.get("accepted_at"), 30)
+        ):
+            write_log(f"manual task recovered from stale running state: {task_id}")
+            task_status = "pending"
+            update_task(task, "pending", message="stale running task recovered for retry")
         if task_status in {"pending", "paused"} and task_id and state.get("last_task_id") != task_id:
             write_log(f"manual task accepted: {task_id}")
             update_task(task, "running", accepted_at=now_text())
