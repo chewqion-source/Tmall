@@ -221,7 +221,7 @@ def inject_dashboard_styles() -> None:
     background: #f3f4f6;
     border-radius: 8px;
     padding: 18px 16px;
-    min-height: 230px;
+    min-height: 330px;
 }
 .rank-title {
     font-weight: 760;
@@ -261,7 +261,7 @@ def inject_dashboard_styles() -> None:
     background: #f3f4f6;
     border-radius: 8px;
     padding: 18px 16px 12px;
-    min-height: 300px;
+    min-height: 340px;
 }
 .svg-chart-title {
     font-weight: 760;
@@ -270,7 +270,7 @@ def inject_dashboard_styles() -> None:
 }
 .svg-chart-card svg {
     width: 100%;
-    height: 244px;
+    height: 280px;
     display: block;
 }
 .svg-chart-label {
@@ -423,14 +423,33 @@ def _metric_delta(current: float, previous: float) -> str:
     return f"{(current - previous) / abs(previous) * 100:+.1f}%"
 
 
+def _sum_column(data: pd.DataFrame, column: str) -> float:
+    if column not in data.columns or data.empty:
+        return 0.0
+    return float(pd.to_numeric(data[column], errors="coerce").fillna(0).sum())
+
+
 def _aggregate_period(data: pd.DataFrame, start_date: pd.Timestamp, end_date: pd.Timestamp) -> dict[str, float]:
     if data.empty:
-        return {"sales_qty": 0.0, "order_count": 0.0, "profit": 0.0, "products": 0.0}
+        return {
+            "pay_amount": 0.0,
+            "sales_qty": 0.0,
+            "order_count": 0.0,
+            "profit": 0.0,
+            "refund_amount": 0.0,
+            "refund_rate": 0.0,
+            "products": 0.0,
+        }
     rows = data[(data["date"] >= start_date) & (data["date"] <= end_date)]
+    pay_amount = _sum_column(rows, "pay_amount")
+    refund_amount = _sum_column(rows, "refund_amount")
     return {
+        "pay_amount": pay_amount,
         "sales_qty": float(rows["sales_qty"].sum()),
         "order_count": float(rows["order_count"].sum()),
         "profit": float(rows["profit"].sum()),
+        "refund_amount": refund_amount,
+        "refund_rate": refund_amount / pay_amount if pay_amount else 0.0,
         "products": float(rows["product_id"].nunique()),
     }
 
@@ -444,7 +463,7 @@ def _period_metrics(data: pd.DataFrame, range_label: str) -> tuple[dict[str, flo
     previous = _aggregate_period(data, prev_start, prev_end)
     deltas = {
         key: _metric_delta(current[key], previous[key])
-        for key in ["sales_qty", "order_count", "profit", "products"]
+        for key in ["pay_amount", "sales_qty", "order_count", "profit", "refund_amount", "refund_rate", "products"]
     }
     return current, deltas
 
@@ -1105,18 +1124,31 @@ def filter_trend_range(data: pd.DataFrame, range_label: str) -> pd.DataFrame:
 
 
 def _line_points(values: list[float], width: int, height: int, pad: int) -> str:
+    return " ".join(f"{x:.1f},{y:.1f}" for x, y in _line_coords(values, width, height, pad))
+
+
+def _line_coords(values: list[float], width: int, height: int, pad: int) -> list[tuple[float, float]]:
     if not values:
-        return ""
+        return []
     low = min(values)
     high = max(values)
     span = high - low if high != low else max(abs(high), 1.0)
     step = (width - pad * 2) / max(len(values) - 1, 1)
-    points = []
+    points: list[tuple[float, float]] = []
     for index, value in enumerate(values):
         x = pad + index * step
         y = pad + (high - value) / span * (height - pad * 2)
-        points.append(f"{x:.1f},{y:.1f}")
-    return " ".join(points)
+        points.append((x, y))
+    return points
+
+
+def _compact_number(value: float) -> str:
+    abs_value = abs(value)
+    if abs_value >= 10000:
+        return f"{value / 10000:.1f}万"
+    if abs_value >= 1000:
+        return f"{value / 1000:.1f}k"
+    return f"{value:,.0f}"
 
 
 def _chart_ticks(data: pd.DataFrame) -> list[tuple[float, str]]:
@@ -1125,7 +1157,7 @@ def _chart_ticks(data: pd.DataFrame) -> list[tuple[float, str]]:
     dates = data["date"].tolist()
     indexes = sorted({0, len(dates) // 2, len(dates) - 1})
     width = 640
-    pad = 44
+    pad = 58
     step = (width - pad * 2) / max(len(dates) - 1, 1)
     return [(pad + index * step, pd.Timestamp(dates[index]).strftime("%m-%d")) for index in indexes]
 
@@ -1139,17 +1171,22 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360)
         )
         return
     data = data.sort_values("date").tail(60)
-    width, chart_height, pad = 640, 244, 44
+    width, chart_height, pad = 640, 280, 58
     sales_values = [float(value) for value in data["sales_qty"]]
     order_values = [float(value) for value in data["order_count"]]
-    sales_points = _line_points(sales_values, width, chart_height, pad)
-    order_points = _line_points(order_values, width, chart_height, pad)
+    sales_coords = _line_coords(sales_values, width, chart_height, pad)
+    order_coords = _line_coords(order_values, width, chart_height, pad)
+    sales_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in sales_coords)
+    order_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in order_coords)
     tick_html = "".join(
         f'<text x="{x:.1f}" y="232" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
         for x, label in _chart_ticks(data)
     )
     max_sales = max(sales_values) if sales_values else 0
     max_orders = max(order_values) if order_values else 0
+    low_sales = min(sales_values) if sales_values else 0
+    sales_label_x, sales_label_y = sales_coords[-1] if sales_coords else (pad, pad)
+    order_label_x, order_label_y = order_coords[-1] if order_coords else (pad, pad)
     st.markdown(
         f"""
 <div class="svg-chart-card">
@@ -1159,13 +1196,17 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360)
     <span><i class="legend-dot" style="background:#f59e0b"></i>订单数</span>
   </div>
   <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="none">
-    <line x1="{pad}" y1="202" x2="610" y2="202" stroke="#cbd5e1" stroke-width="1" />
-    <line x1="{pad}" y1="36" x2="610" y2="36" stroke="#e2e8f0" stroke-width="1" />
-    <line x1="{pad}" y1="119" x2="610" y2="119" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="218" x2="610" y2="218" stroke="#cbd5e1" stroke-width="1" />
+    <line x1="{pad}" y1="42" x2="610" y2="42" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="130" x2="610" y2="130" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="42" x2="{pad}" y2="218" stroke="#cbd5e1" stroke-width="1" />
+    <text x="10" y="46" class="svg-chart-label">{_compact_number(max_sales)}</text>
+    <text x="10" y="222" class="svg-chart-label">{_compact_number(low_sales)}</text>
     <polyline fill="none" stroke="#2563eb" stroke-width="3" points="{sales_points}" />
     <polyline fill="none" stroke="#f59e0b" stroke-width="3" stroke-dasharray="6 5" points="{order_points}" />
-    <text x="{pad}" y="28" class="svg-chart-label">件数最高 {max_sales:,.0f}</text>
-    <text x="610" y="28" text-anchor="end" class="svg-chart-label">订单最高 {max_orders:,.0f}</text>
+    <text x="{min(sales_label_x + 8, 584):.1f}" y="{max(sales_label_y - 8, 18):.1f}" class="svg-chart-label">件数 {_compact_number(sales_values[-1])}</text>
+    <text x="{min(order_label_x + 8, 584):.1f}" y="{min(order_label_y + 18, 260):.1f}" class="svg-chart-label">订单 {_compact_number(order_values[-1])}</text>
+    <text x="610" y="28" text-anchor="end" class="svg-chart-label">订单最高 {_compact_number(max_orders)}</text>
     {tick_html}
   </svg>
 </div>
@@ -1184,18 +1225,24 @@ def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360) -> No
         return
     data = data.sort_values("date").tail(60)
     values = [float(value) for value in data["profit"]]
-    width, chart_height, pad = 640, 244, 44
+    width, chart_height, pad = 640, 280, 58
     max_abs = max(max(abs(value) for value in values), 1.0)
-    baseline = 119
+    baseline = 140
     step = (width - pad * 2) / max(len(values), 1)
     bar_width = max(min(step * 0.68, 18), 4)
     bars = []
     for index, value in enumerate(values):
         x = pad + index * step + (step - bar_width) / 2
-        bar_height = abs(value) / max_abs * 78
+        bar_height = abs(value) / max_abs * 90
         y = baseline - bar_height if value >= 0 else baseline
         color = "#16a34a" if value >= 0 else "#dc2626"
-        bars.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height:.1f}" fill="{color}" rx="2" />')
+        label_y = y - 5 if value >= 0 else y + bar_height + 12
+        label_y = min(max(label_y, 18), 260)
+        value_label = _compact_number(value)
+        bars.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height:.1f}" fill="{color}" rx="2" />'
+            f'<text x="{x + bar_width / 2:.1f}" y="{label_y:.1f}" text-anchor="middle" class="svg-chart-label">{escape(value_label)}</text>'
+        )
     tick_html = "".join(
         f'<text x="{x:.1f}" y="232" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
         for x, label in _chart_ticks(data)
@@ -1206,10 +1253,14 @@ def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360) -> No
   <div class="svg-chart-title">{escape(title)}</div>
   <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="none">
     <line x1="{pad}" y1="{baseline}" x2="610" y2="{baseline}" stroke="#64748b" stroke-width="1" />
-    <line x1="{pad}" y1="36" x2="610" y2="36" stroke="#e2e8f0" stroke-width="1" />
-    <line x1="{pad}" y1="202" x2="610" y2="202" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="42" x2="610" y2="42" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="238" x2="610" y2="238" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="42" x2="{pad}" y2="238" stroke="#cbd5e1" stroke-width="1" />
+    <text x="10" y="46" class="svg-chart-label">{_compact_number(max_abs)}</text>
+    <text x="10" y="{baseline + 4}" class="svg-chart-label">0</text>
+    <text x="10" y="242" class="svg-chart-label">-{_compact_number(max_abs)}</text>
     {''.join(bars)}
-    <text x="{pad}" y="28" class="svg-chart-label">最大波动 {_format_money(max_abs)}</text>
+    <text x="610" y="28" text-anchor="end" class="svg-chart-label">最大波动 {_format_money(max_abs)}</text>
     {tick_html}
   </svg>
 </div>
@@ -1348,7 +1399,7 @@ def _build_product_rank_rows(product_daily: pd.DataFrame) -> pd.DataFrame:
         profit_top = (
             store_products[store_products["实时盈亏"] > 0]
             .sort_values("实时盈亏", ascending=False)
-            .head(5)
+            .head(10)
             .rename(columns={"product_id": "商品ID"})
         )
         if not profit_top.empty:
@@ -1360,7 +1411,7 @@ def _build_product_rank_rows(product_daily: pd.DataFrame) -> pd.DataFrame:
         loss_top = (
             store_products[store_products["实时盈亏"] < 0]
             .sort_values("实时盈亏", ascending=True)
-            .head(5)
+            .head(10)
             .rename(columns={"product_id": "商品ID"})
         )
         if not loss_top.empty:
@@ -1452,7 +1503,7 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
             _render_product_rank_chart(
                 filtered_rank[filtered_rank["类型"] == "盈利"],
                 "实时盈亏",
-                "盈利产品 TOP5",
+                "盈利产品 TOP10",
                 "暂无盈利产品",
                 "#16a34a",
             )
@@ -1460,7 +1511,7 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
             _render_product_rank_chart(
                 filtered_rank[filtered_rank["类型"] == "亏损"],
                 "实时盈亏",
-                "亏损产品 TOP5",
+                "亏损产品 TOP10",
                 "暂无亏损产品",
                 "#dc2626",
             )
@@ -1504,7 +1555,7 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
     profit_rank = (
         product_daily[product_daily["实时盈亏"] > 0]
         .sort_values("实时盈亏", ascending=False)
-        .head(5)
+        .head(10)
         .rename(columns={"store": "店铺", "product_id": "商品ID"})
         .copy()
     )
@@ -1512,7 +1563,7 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
     loss_rank = (
         product_daily[product_daily["实时盈亏"] < 0]
         .sort_values("实时盈亏", ascending=True)
-        .head(5)
+        .head(10)
         .rename(columns={"store": "店铺", "product_id": "商品ID"})
         .copy()
     )
@@ -1521,14 +1572,14 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
     with profit_col:
         _render_rank_bar_list(
             profit_rank,
-            "盈利产品 TOP5",
+            "盈利产品 TOP10",
             "#16a34a",
             "暂无盈利产品",
         )
     with loss_col:
         _render_rank_bar_list(
             loss_rank,
-            "亏损产品 TOP5",
+            "亏损产品 TOP10",
             "#dc2626",
             "暂无亏损产品",
         )
@@ -1543,12 +1594,12 @@ def render_store_overview_section(
     current, deltas = _period_metrics(store_daily, trend_range)
     metric_cols = st.columns(6)
     cards = [
+        ("支付金额", _format_money(current["pay_amount"]), deltas["pay_amount"], "neutral"),
         ("订单数", f"{current['order_count']:,.0f}", deltas["order_count"], "neutral"),
         ("件数", f"{current['sales_qty']:,.0f}", deltas["sales_qty"], "neutral"),
         ("盈亏", _format_money(current["profit"]), deltas["profit"], profit_tone(current["profit"])),
-        ("商品数", f"{current['products']:,.0f}", deltas["products"], "neutral"),
-        ("日均订单数", f"{current['order_count'] / max(_range_days(trend_range), 1):,.1f}", deltas["order_count"], "neutral"),
-        ("日均盈亏", _format_money(current["profit"] / max(_range_days(trend_range), 1)), deltas["profit"], profit_tone(current["profit"])),
+        ("退款金额", _format_money(current["refund_amount"]), deltas["refund_amount"], "neutral"),
+        ("退款率", f"{current['refund_rate']:.1%}", deltas["refund_rate"], "neutral"),
     ]
     for column, (label, value, delta, tone) in zip(metric_cols, cards):
         with column:
@@ -1569,19 +1620,15 @@ def render_product_overview_section(
     trend_selected: pd.DataFrame,
 ) -> None:
     current, deltas = _period_metrics(selected, trend_range)
-    total_profit = float(selected_summary["total_profit"])
-    latest_profit = float(latest["profit"])
-    latest_sales_delta = signed(float(latest["sales_change"]), 0) if pd.notna(latest["sales_change"]) else None
-    latest_profit_delta = signed(float(latest["profit_change"])) if pd.notna(latest["profit_change"]) else None
 
     metric_cols = st.columns(6)
     cards = [
+        ("支付金额", _format_money(current["pay_amount"]), deltas["pay_amount"], "neutral"),
         ("订单数", f"{current['order_count']:,.0f}", deltas["order_count"], "neutral"),
         ("件数", f"{current['sales_qty']:,.0f}", deltas["sales_qty"], "neutral"),
         ("盈亏", _format_money(current["profit"]), deltas["profit"], profit_tone(current["profit"])),
-        ("累计盈亏", _format_money(total_profit), signed(total_profit), profit_tone(total_profit)),
-        ("最新件数", f"{float(latest['sales_qty']):,.0f}", latest_sales_delta, "neutral"),
-        ("最新盈亏", _format_money(latest_profit), latest_profit_delta, profit_tone(latest_profit)),
+        ("退款金额", _format_money(current["refund_amount"]), deltas["refund_amount"], "neutral"),
+        ("退款率", f"{current['refund_rate']:.1%}", deltas["refund_rate"], "neutral"),
     ]
     for column, (label, value, delta, tone) in zip(metric_cols, cards):
         with column:
