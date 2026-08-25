@@ -196,6 +196,9 @@ def inject_dashboard_styles() -> None:
 .metric-section-gap {
     height: 10px;
 }
+.metric-chart-gap {
+    height: 18px;
+}
 .section-title-row {
     display: flex;
     align-items: center;
@@ -221,7 +224,7 @@ def inject_dashboard_styles() -> None:
     background: #f3f4f6;
     border-radius: 8px;
     padding: 18px 16px;
-    min-height: 330px;
+    min-height: 400px;
 }
 .rank-title {
     font-weight: 760;
@@ -230,10 +233,10 @@ def inject_dashboard_styles() -> None:
 }
 .rank-row {
     display: grid;
-    grid-template-columns: minmax(130px, 210px) 1fr 76px;
+    grid-template-columns: minmax(120px, 190px) 1fr 72px minmax(120px, 150px);
     align-items: center;
     gap: 10px;
-    margin: 8px 0;
+    margin: 9px 0;
     font-size: 12px;
 }
 .rank-name {
@@ -255,6 +258,12 @@ def inject_dashboard_styles() -> None:
 .rank-value {
     text-align: right;
     color: #0f172a;
+    font-variant-numeric: tabular-nums;
+}
+.rank-roi {
+    color: #475569;
+    font-size: 11px;
+    line-height: 1.35;
     font-variant-numeric: tabular-nums;
 }
 .svg-chart-card {
@@ -433,6 +442,59 @@ def _sum_column(data: pd.DataFrame, column: str) -> float:
     return float(pd.to_numeric(data[column], errors="coerce").fillna(0).sum())
 
 
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if abs(denominator) < 1e-9:
+        return 0.0
+    return float(numerator) / float(denominator)
+
+
+def _format_roi(value: float | None) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    return f"{float(value):.2f}"
+
+
+def _net_roi(rows: pd.DataFrame) -> float:
+    return _safe_ratio(_sum_column(rows, "profit"), _sum_column(rows, "ad_cost"))
+
+
+def _net_roi_optional(rows: pd.DataFrame) -> float | None:
+    ad_cost = _sum_column(rows, "ad_cost")
+    if ad_cost <= 0:
+        return None
+    return _sum_column(rows, "profit") / ad_cost
+
+
+def _break_even_roi(rows: pd.DataFrame) -> float | None:
+    pay_amount = _sum_column(rows, "pay_amount")
+    break_even_ad_cost = _sum_column(rows, "ad_cost") + _sum_column(rows, "profit")
+    if pay_amount <= 0 or break_even_ad_cost <= 0:
+        return None
+    return pay_amount / break_even_ad_cost
+
+
+def _weighted_roi(rows: pd.DataFrame, roi_column: str = "promotion_roi") -> float | None:
+    if rows.empty or roi_column not in rows.columns:
+        return None
+    roi = pd.to_numeric(rows[roi_column], errors="coerce")
+    ad_cost = pd.to_numeric(rows.get("ad_cost", 0), errors="coerce").fillna(0)
+    valid = roi.notna() & (roi > 0) & (ad_cost > 0)
+    if valid.any() and float(ad_cost[valid].sum()) > 0:
+        return float((roi[valid] * ad_cost[valid]).sum() / ad_cost[valid].sum())
+    valid_roi = roi.dropna()
+    valid_roi = valid_roi[valid_roi > 0]
+    if valid_roi.empty:
+        return None
+    return float(valid_roi.mean())
+
+
+def _hour_delta(current: float, previous: float | None, suffix: str = "") -> str:
+    if previous is None:
+        return "小时环比 --"
+    delta = _metric_delta(float(current), float(previous))
+    return f"小时环比 {delta}{suffix}"
+
+
 def _aggregate_period(data: pd.DataFrame, start_date: pd.Timestamp, end_date: pd.Timestamp) -> dict[str, float]:
     if data.empty:
         return {
@@ -442,6 +504,7 @@ def _aggregate_period(data: pd.DataFrame, start_date: pd.Timestamp, end_date: pd
             "profit": 0.0,
             "refund_amount": 0.0,
             "refund_rate": 0.0,
+            "roi": 0.0,
             "products": 0.0,
         }
     rows = data[(data["date"] >= start_date) & (data["date"] <= end_date)]
@@ -454,6 +517,7 @@ def _aggregate_period(data: pd.DataFrame, start_date: pd.Timestamp, end_date: pd
         "profit": float(rows["profit"].sum()),
         "refund_amount": refund_amount,
         "refund_rate": refund_amount / pay_amount if pay_amount else 0.0,
+        "roi": _net_roi(rows),
         "products": float(rows["product_id"].nunique()),
     }
 
@@ -467,7 +531,7 @@ def _period_metrics(data: pd.DataFrame, range_label: str) -> tuple[dict[str, flo
     previous = _aggregate_period(data, prev_start, prev_end)
     deltas = {
         key: _metric_delta(current[key], previous[key])
-        for key in ["pay_amount", "sales_qty", "order_count", "profit", "refund_amount", "refund_rate", "products"]
+        for key in ["pay_amount", "sales_qty", "order_count", "profit", "refund_amount", "refund_rate", "roi", "products"]
     }
     return current, deltas
 
@@ -676,8 +740,20 @@ def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.Data
         "profit",
         "pay_amount",
         "ad_cost",
+        "site_ad_cost",
+        "keyword_ad_cost",
         "refund_amount",
         "sku_count",
+        "promotion_roi",
+        "site_promotion_roi",
+        "keyword_promotion_roi",
+        "current_roi",
+        "break_even_roi",
+        "merch_cost",
+        "freight_cost",
+        "platform_fee",
+        "tax_fee",
+        "estimated_marketing_cost",
     ]
     for column in numeric_columns:
         if column not in data.columns:
@@ -688,7 +764,22 @@ def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.Data
         data["product_name"] = ""
     if "sku_count" not in data.columns:
         data["sku_count"] = 0
-    return data.dropna(subset=["date"]), payload.get("generated_at")
+    data = data.dropna(subset=["date"])
+    previous_records = payload.get("previous_records", [])
+    previous = pd.DataFrame(previous_records)
+    if not previous.empty and required.issubset(previous.columns):
+        previous["date"] = pd.to_datetime(previous["date"], errors="coerce")
+        for column in numeric_columns:
+            if column not in previous.columns:
+                previous[column] = 0
+            previous[column] = pd.to_numeric(previous[column], errors="coerce").fillna(0)
+        previous["product_id"] = previous["product_id"].astype(str)
+        previous = previous.dropna(subset=["date"])
+    else:
+        previous = pd.DataFrame()
+    data.attrs["previous"] = previous
+    data.attrs["previous_generated_at"] = payload.get("previous_generated_at")
+    return data, payload.get("generated_at")
 
 
 def build_profit_advice(product_id: str, realtime_daily: pd.DataFrame, all_daily: pd.DataFrame) -> tuple[str, bool]:
@@ -1284,6 +1375,13 @@ def _format_money(value: float) -> str:
     return f"¥{value:,.2f}"
 
 
+def _rank_roi_meta(row: pd.Series) -> str:
+    current_roi = _format_roi(row.get("当前ROI"))
+    promotion_roi = _format_roi(row.get("推广ROI"))
+    break_even_roi = _format_roi(row.get("保本ROI"))
+    return f"当前 {current_roi}<br>推广 {promotion_roi}<br>保本 {break_even_roi}"
+
+
 def _render_rank_bar_list(data: pd.DataFrame, title: str, color: str, empty_text: str) -> None:
     if data.empty:
         st.markdown(
@@ -1303,12 +1401,14 @@ def _render_rank_bar_list(data: pd.DataFrame, title: str, color: str, empty_text
         value = float(row["实时盈亏"])
         width = max(abs(value) / max_value * 100, 1.5)
         label = f"{row['店铺']} #{int(row['排名'])} {row['商品ID']}"
+        roi_meta = _rank_roi_meta(row)
         rows_html.append(
             f"""
 <div class="rank-row">
     <div class="rank-name" title="{escape(label)}">{escape(label)}</div>
     <div class="rank-track"><div class="rank-fill" style="width:{width:.1f}%; background:{color};"></div></div>
     <div class="rank-value">{escape(_format_money(value))}</div>
+    <div class="rank-roi">{roi_meta}</div>
 </div>
 """
         )
@@ -1534,19 +1634,39 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
     sales_total = float(latest_rows["sales_qty"].sum())
     profit_total = float(latest_rows["profit"].sum())
     refund_rate = refund_total / pay_total if pay_total else 0.0
+    roi_total = _net_roi(latest_rows)
 
-    metric_cols = st.columns(6)
+    previous_rows = realtime_daily.attrs.get("previous", pd.DataFrame()) if not realtime_daily.empty else pd.DataFrame()
+    if not previous_rows.empty:
+        previous_pay = _sum_column(previous_rows, "pay_amount")
+        previous_refund = _sum_column(previous_rows, "refund_amount")
+        previous_values = {
+            "pay_amount": previous_pay,
+            "order_count": _sum_column(previous_rows, "order_count"),
+            "sales_qty": _sum_column(previous_rows, "sales_qty"),
+            "profit": _sum_column(previous_rows, "profit"),
+            "refund_amount": previous_refund,
+            "refund_rate": previous_refund / previous_pay if previous_pay else 0.0,
+            "roi": _net_roi(previous_rows),
+        }
+    else:
+        previous_values = {}
+
+    metric_cols = st.columns(7)
     cards = [
-        ("支付金额", _format_money(pay_total), "小时环比 --", "neutral"),
-        ("订单数", f"{order_total:,.0f}", "小时环比 --", "neutral"),
-        ("件数", f"{sales_total:,.0f}", "小时环比 --", "neutral"),
-        ("盈亏", _format_money(profit_total), "小时环比 --", profit_tone(profit_total)),
-        ("退款金额", _format_money(refund_total), "小时环比 --", "neutral"),
-        ("退款率", f"{refund_rate:.1%}", "小时环比 --", "neutral"),
+        ("支付金额", _format_money(pay_total), _hour_delta(pay_total, previous_values.get("pay_amount")), "neutral"),
+        ("订单数", f"{order_total:,.0f}", _hour_delta(order_total, previous_values.get("order_count")), "neutral"),
+        ("件数", f"{sales_total:,.0f}", _hour_delta(sales_total, previous_values.get("sales_qty")), "neutral"),
+        ("盈亏", _format_money(profit_total), _hour_delta(profit_total, previous_values.get("profit")), profit_tone(profit_total)),
+        ("退款金额", _format_money(refund_total), _hour_delta(refund_total, previous_values.get("refund_amount")), "neutral"),
+        ("退款率", f"{refund_rate:.1%}", _hour_delta(refund_rate, previous_values.get("refund_rate")), "neutral"),
+        ("ROI", _format_roi(roi_total), _hour_delta(roi_total, previous_values.get("roi")), profit_tone(roi_total)),
     ]
     for column, (label, value, delta, tone) in zip(metric_cols, cards):
         with column:
             metric_card(label, value, delta, tone)
+
+    st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
 
     product_daily = (
         latest_rows.groupby(["store", "product_id"], as_index=False)
@@ -1554,8 +1674,25 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
             销量=("sales_qty", "sum"),
             订单量=("order_count", "sum"),
             实时盈亏=("profit", "sum"),
+            支付金额=("pay_amount", "sum"),
+            推广消耗=("ad_cost", "sum"),
         )
     )
+    roi_rows = []
+    for _, row in product_daily.iterrows():
+        rows = latest_rows[
+            (latest_rows["store"] == row["store"])
+            & (latest_rows["product_id"].astype(str) == str(row["product_id"]))
+        ]
+        roi_rows.append(
+            {
+                "当前ROI": _net_roi_optional(rows),
+                "推广ROI": _weighted_roi(rows, "promotion_roi"),
+                "保本ROI": _break_even_roi(rows),
+            }
+        )
+    if roi_rows:
+        product_daily = pd.concat([product_daily.reset_index(drop=True), pd.DataFrame(roi_rows)], axis=1)
     profit_rank = (
         product_daily[product_daily["实时盈亏"] > 0]
         .sort_values("实时盈亏", ascending=False)
@@ -1596,7 +1733,7 @@ def render_store_overview_section(
     trend_store: pd.DataFrame,
 ) -> None:
     current, deltas = _period_metrics(store_daily, trend_range)
-    metric_cols = st.columns(6)
+    metric_cols = st.columns(7)
     cards = [
         ("支付金额", _format_money(current["pay_amount"]), deltas["pay_amount"], "neutral"),
         ("订单数", f"{current['order_count']:,.0f}", deltas["order_count"], "neutral"),
@@ -1604,10 +1741,13 @@ def render_store_overview_section(
         ("盈亏", _format_money(current["profit"]), deltas["profit"], profit_tone(current["profit"])),
         ("退款金额", _format_money(current["refund_amount"]), deltas["refund_amount"], "neutral"),
         ("退款率", f"{current['refund_rate']:.1%}", deltas["refund_rate"], "neutral"),
+        ("ROI", _format_roi(current["roi"]), deltas["roi"], profit_tone(current["roi"])),
     ]
     for column, (label, value, delta, tone) in zip(metric_cols, cards):
         with column:
             metric_card(label, value, delta, tone)
+
+    st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
 
     chart_cols = st.columns(2)
     with chart_cols[0]:
@@ -1625,7 +1765,7 @@ def render_product_overview_section(
 ) -> None:
     current, deltas = _period_metrics(selected, trend_range)
 
-    metric_cols = st.columns(6)
+    metric_cols = st.columns(7)
     cards = [
         ("支付金额", _format_money(current["pay_amount"]), deltas["pay_amount"], "neutral"),
         ("订单数", f"{current['order_count']:,.0f}", deltas["order_count"], "neutral"),
@@ -1633,10 +1773,13 @@ def render_product_overview_section(
         ("盈亏", _format_money(current["profit"]), deltas["profit"], profit_tone(current["profit"])),
         ("退款金额", _format_money(current["refund_amount"]), deltas["refund_amount"], "neutral"),
         ("退款率", f"{current['refund_rate']:.1%}", deltas["refund_rate"], "neutral"),
+        ("ROI", _format_roi(current["roi"]), deltas["roi"], profit_tone(current["roi"])),
     ]
     for column, (label, value, delta, tone) in zip(metric_cols, cards):
         with column:
             metric_card(label, value, delta, tone)
+
+    st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
 
     chart_cols = st.columns(2)
     with chart_cols[0]:
