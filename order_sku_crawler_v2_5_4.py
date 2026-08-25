@@ -413,15 +413,23 @@ async def get_item_id_from_trade_snap(context, url, cache):
 
     p = None
     try:
-        p = await context.new_page()
-        await p.goto(url, wait_until="domcontentloaded", timeout=30000)
+        p = await asyncio.wait_for(context.new_page(), timeout=10)
+        await asyncio.wait_for(
+            p.goto(url, wait_until="domcontentloaded", timeout=20000),
+            timeout=25,
+        )
 
-        iid = parse_item_id_from_html(await p.content())
+        iid = parse_item_id_from_html(
+            await asyncio.wait_for(p.content(), timeout=5)
+        )
 
         if not iid:
             try:
                 iid = parse_item_id_from_html(
-                    await p.locator("body").inner_text(timeout=5000)
+                    await asyncio.wait_for(
+                        p.locator("body").inner_text(timeout=3000),
+                        timeout=5,
+                    )
                 )
             except Exception:
                 pass
@@ -438,7 +446,7 @@ async def get_item_id_from_trade_snap(context, url, cache):
     finally:
         if p:
             try:
-                await p.close()
+                await asyncio.wait_for(p.close(), timeout=5)
             except Exception:
                 pass
 
@@ -2429,11 +2437,17 @@ async def run_current_shop():
         new_snap = 0
 
         for index, row in enumerate(items, start=1):
-            iid, status, hit = await get_item_id_from_trade_snap(
-                context,
-                row.get("trade_snap", ""),
-                cache
-            )
+            try:
+                iid, status, hit = await asyncio.wait_for(
+                    get_item_id_from_trade_snap(
+                        context,
+                        row.get("trade_snap", ""),
+                        cache
+                    ),
+                    timeout=45,
+                )
+            except asyncio.TimeoutError:
+                iid, status, hit = "", "trade snap timeout", False
 
             row["item_id"] = iid
             row["status"] = status

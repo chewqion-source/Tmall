@@ -74,6 +74,12 @@ def save_local_state(state: dict[str, object]) -> None:
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def touch_schedule_clock() -> None:
+    state = load_local_state()
+    state["last_scheduled_at"] = now_text()
+    save_local_state(state)
+
+
 def connect_sftp(max_attempts: int = 3):
     key = paramiko.Ed25519Key.from_private_key_file(str(SSH_KEY_FILE))
     last_error: Exception | None = None
@@ -208,10 +214,13 @@ def run_command(label: str, args: list[str], log_file: Path, max_attempts: int =
     return code
 
 
-def run_pipeline(reason: str, task: dict[str, object] | None = None) -> int:
+def run_pipeline(reason: str, task: dict[str, object] | None = None, skip_login: bool = False) -> int:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     run_id = str(task.get("id")) if task else f"scheduled-{datetime.now():%Y%m%d%H%M%S}"
     log_file = LOG_DIR / f"run_{datetime.now():%Y%m%d_%H%M%S}_{run_id}.log"
+
+    if reason in {"scheduled", "manual"}:
+        touch_schedule_clock()
 
     try:
         lock_stream = LOCK_FILE.open("a+")
@@ -228,8 +237,14 @@ def run_pipeline(reason: str, task: dict[str, object] | None = None) -> int:
             update_status("skipped", reason=reason, run_id=run_id, message="上一轮抓取仍在运行，已跳过")
             return 0
 
-        update_status("checking_login", reason=reason, run_id=run_id, log_file=str(log_file))
-        login_code = run_command("login check", [PYTHON, str(LOGIN_CHECK_SCRIPT)], log_file)
+        login_step = "login check skipped" if skip_login else "login check"
+        update_status("checking_login", reason=reason, run_id=run_id, step=login_step, log_file=str(log_file))
+        if skip_login:
+            with log_file.open("a", encoding="utf-8") as handle:
+                handle.write(f"\n[{now_text()}] login check skipped by manual confirmation\n")
+            login_code = 0
+        else:
+            login_code = run_command("login check", [PYTHON, str(LOGIN_CHECK_SCRIPT)], log_file)
         if login_code == 20:
             message = "检测到登录失效或验证码，暂停抓取，等待登录恢复"
             update_status("paused", reason=reason, run_id=run_id, message=message, log_file=str(log_file))
@@ -265,7 +280,7 @@ def run_pipeline(reason: str, task: dict[str, object] | None = None) -> int:
             update_task(task, "success", message="实时抓取完成并已同步网站/飞书")
         state = load_local_state()
         state["last_success_at"] = now_text()
-        if reason == "scheduled":
+        if reason in {"scheduled", "manual"}:
             state["last_scheduled_at"] = now_text()
         if task:
             state["last_task_id"] = task.get("id")
@@ -325,6 +340,16 @@ def poll_once() -> None:
 
 
 def main() -> int:
+    if "--run-now" in sys.argv:
+        task = {
+            "id": f"local-{datetime.now():%Y%m%d%H%M%S}",
+            "action": "run_realtime",
+            "status": "running",
+            "requested_at": now_text(),
+            "requested_by": "local",
+        }
+        return run_pipeline("manual", task, skip_login="--skip-login" in sys.argv)
+
     if len(sys.argv) > 1 and sys.argv[1] == "--once":
         poll_once()
         return 0
