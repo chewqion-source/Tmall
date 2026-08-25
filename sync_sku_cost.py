@@ -19,6 +19,10 @@ SSH_KEY_FILE = BASE_DIR / ".ssh_tmp" / "tmall_codex_temp_ed25519"
 REMOTE_HOST = "150.158.133.102"
 REMOTE_USER = "ubuntu"
 REMOTE_SKU_COST = "/opt/tmall-dashboard/data/sku_cost.xlsx"
+OLD_ZY_STORE_NAME = "坐拥" + "宁静"
+SHOP_NAME_ALIASES = {
+    OLD_ZY_STORE_NAME: "坐拥_宁静",
+}
 SKU_COLUMNS = [
     "店铺",
     "商品ID",
@@ -30,6 +34,20 @@ SKU_COLUMNS = [
     "首次发现日期",
     "最近成交日期",
 ]
+
+
+def _normalize_shop_names(data: pd.DataFrame) -> pd.DataFrame:
+    if "店铺" not in data.columns:
+        return data
+    normalized = data.copy()
+    normalized["店铺"] = (
+        normalized["店铺"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .replace(SHOP_NAME_ALIASES)
+    )
+    return normalized
 
 
 def _read_sku_cost(path: Path) -> pd.DataFrame:
@@ -53,7 +71,7 @@ def _read_sku_cost(path: Path) -> pd.DataFrame:
         data[column] = data[column].fillna("").astype(str).str.strip()
     for column in ["单件货价", "快递费"]:
         data[column] = pd.to_numeric(data[column], errors="coerce").round(2)
-    return data
+    return _normalize_shop_names(data)
 
 
 def _save_sku_cost(data: pd.DataFrame, path: Path) -> None:
@@ -63,6 +81,7 @@ def _save_sku_cost(data: pd.DataFrame, path: Path) -> None:
         if column not in cleaned.columns:
             cleaned[column] = ""
     cleaned = cleaned[SKU_COLUMNS]
+    cleaned = _normalize_shop_names(cleaned)
     has_key = (
         cleaned["店铺"].fillna("").astype(str).str.strip().ne("")
         | cleaned["商品ID"].fillna("").astype(str).str.strip().ne("")
