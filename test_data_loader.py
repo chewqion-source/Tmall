@@ -34,7 +34,7 @@ def test_converted_workbook_and_merged_sample():
 def test_four_desktop_stores_stay_separate():
     sources = find_store_workbooks()
     daily = load_store_daily(sources)
-    assert set(daily["store"]) == {"易丽洁", "坐拥宁静", "国货严选", "咖时光"}
+    assert set(daily["store"]) == {"易丽洁", "坐拥_宁静", "国货严选", "咖时光"}
     assert daily.groupby("store")["source_file"].nunique().eq(1).all()
     assert not daily.duplicated(["store", "date", "product_id"]).any()
 
