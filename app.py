@@ -261,7 +261,10 @@ def inject_dashboard_styles() -> None:
     background: #f3f4f6;
     border-radius: 8px;
     padding: 18px 16px 12px;
-    min-height: 340px;
+    height: 368px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
 }
 .svg-chart-title {
     font-weight: 760;
@@ -270,7 +273,8 @@ def inject_dashboard_styles() -> None:
 }
 .svg-chart-card svg {
     width: 100%;
-    height: 280px;
+    flex: 1;
+    min-height: 0;
     display: block;
 }
 .svg-chart-label {
@@ -1725,13 +1729,7 @@ store_trend = (
 trend_store = filter_trend_range(store_trend, trend_range)
 render_store_overview_section(selected_store, store_daily, trend_range, trend_store)
 
-product_heading_cols = st.columns([4, 1], vertical_alignment="center")
-with product_heading_cols[0]:
-    st.markdown("## 商品概览")
-with product_heading_cols[1]:
-    if st.button("SKU成本维护", type="secondary", width="stretch"):
-        st.query_params["page"] = "sku-cost"
-        st.rerun()
+st.markdown("## 商品概览")
 
 product_filter_cols = st.columns([1.8, 1.2, 2])
 with product_filter_cols[0]:
