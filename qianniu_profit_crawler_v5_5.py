@@ -163,6 +163,18 @@ def load_enabled_shops():
     return shops
 
 
+def is_guohuo_shop(name):
+    return str(name or "").strip() == GUOHUO_SHOP_NAME
+
+
+def load_qianniu_refund_shops():
+    return [
+        shop
+        for shop in load_enabled_shops()
+        if not is_guohuo_shop(shop.get("name"))
+    ]
+
+
 def import_module_from_file(
     module_name,
     file_path
@@ -305,7 +317,7 @@ def run_refund_crawler():
 
     print()
     print("=" * 76)
-    print("阶段 3 / 4：抓取三家店当天【退款成功】金额")
+    print("阶段 3 / 4：抓取普通千牛店当天【退款成功】金额")
     print("=" * 76)
 
     if not REFUND_SCRIPT.exists():
@@ -350,7 +362,7 @@ def run_refund_crawler():
     print()
     print("本轮退款结果确认：")
 
-    for shop in load_enabled_shops():
+    for shop in load_qianniu_refund_shops():
         name = shop["name"]
         info = REFUND_RESULT_MAP.get(name)
 
@@ -412,6 +424,14 @@ def load_shop_refund_total(shop):
     写入顺序问题被误判为旧退款文件。
     """
     name = shop["name"]
+
+    if is_guohuo_shop(name):
+        return (
+            0.0,
+            0,
+            None,
+            "国货严选跳过千牛退款抓取"
+        )
 
     if name in REFUND_RESULT_MAP:
         info = REFUND_RESULT_MAP[name]
@@ -940,7 +960,10 @@ def integrate_shop(
     )
 
     df["退款金额"] = 0.0
-    df["退款口径"] = "当天申请时间 + 售后状态=退款成功；按退款明细商品ID归属"
+    if is_guohuo_shop(shop["name"]):
+        df["退款口径"] = "国货严选使用淘工厂专用实时口径；不进入千牛退款抓取"
+    else:
+        df["退款口径"] = "当天申请时间 + 售后状态=退款成功；按退款明细商品ID归属"
     df["退款数据状态"] = refund_status
 
     if not refund_by_product.empty:
@@ -974,7 +997,7 @@ def integrate_shop(
         print(
             f"   ⚠ 未能按商品ID归属退款：¥{refund_unassigned:.2f}"
         )
-    if refund_status != "正常" and refund_status != "本轮退款为0":
+    if refund_status != "正常" and refund_status not in {"本轮退款为0", "国货严选跳过千牛退款抓取"}:
         print(
             f"   ⚠ 退款数据状态：{refund_status}；本店本轮不扣历史退款"
         )

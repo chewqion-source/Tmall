@@ -69,6 +69,64 @@ def safe_filename(name):
     ).strip()
 
 
+def save_promotion_debug(shop_name, source_name, payload, page_summaries, agg):
+    try:
+        log_dir = LOG_ROOT / safe_filename(shop_name)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = log_dir / f"promotion_debug_{safe_filename(source_name)}_{stamp}.json"
+
+        total_charge = 0.0
+        top_rows = []
+        if isinstance(agg, pd.DataFrame) and not agg.empty:
+            charge_col = f"{source_name}消耗"
+            if charge_col in agg.columns:
+                temp = agg.copy()
+                temp[charge_col] = clean_numeric(temp[charge_col])
+                total_charge = float(temp[charge_col].sum())
+                keep_cols = [
+                    "商品ID",
+                    f"{source_name}商品名称",
+                    f"{source_name}消耗",
+                    f"{source_name}成交金额",
+                    f"{source_name}点击",
+                    f"{source_name}ROI",
+                ]
+                keep_cols = [col for col in keep_cols if col in temp.columns]
+                top_rows = (
+                    temp.sort_values(charge_col, ascending=False)
+                    .head(30)[keep_cols]
+                    .to_dict("records")
+                )
+
+        payload_summary = {
+            "bizCode": payload.get("bizCode") if isinstance(payload, dict) else None,
+            "mx_bizCode": payload.get("mx_bizCode") if isinstance(payload, dict) else None,
+            "offset": payload.get("offset") if isinstance(payload, dict) else None,
+            "pageSize": payload.get("pageSize") if isinstance(payload, dict) else None,
+            "rptQuery": payload.get("rptQuery") if isinstance(payload, dict) else None,
+        }
+        path.write_text(
+            json.dumps(
+                {
+                    "shop": shop_name,
+                    "source": source_name,
+                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "payload_summary": payload_summary,
+                    "page_summaries": page_summaries,
+                    "final_total_charge": round(total_charge, 2),
+                    "top_rows": top_rows,
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        print(f"⚠️ [{shop_name}] {source_name} 推广诊断保存失败：{exc}")
+
+
 def normalize_id(value):
 
     if value is None:
@@ -1905,6 +1963,15 @@ def crawl_playroad(
         for row in first_unique_rows
     )
 
+    page_summaries = [
+        {
+            "page": 1,
+            "offset": 0,
+            "products": first_product_count,
+            "charge": round(first_charge, 2),
+        }
+    ]
+
     print(
         f"[{shop_name}] {source_name} 第1页："
         f"{first_product_count} 个商品，"
@@ -2180,6 +2247,15 @@ def crawl_playroad(
             for row in page_rows
         )
 
+        page_summaries.append(
+            {
+                "page": page_index,
+                "offset": offset,
+                "products": product_count,
+                "charge": round(page_charge, 2),
+            }
+        )
+
         print(
             f"[{shop_name}] {source_name} 第{page_index}页 "
             f"offset={offset}："
@@ -2224,6 +2300,14 @@ def crawl_playroad(
             all_rows,
             source_name
         )
+    )
+
+    save_promotion_debug(
+        shop_name,
+        source_name,
+        base_payload,
+        page_summaries,
+        agg
     )
 
     if agg.empty:

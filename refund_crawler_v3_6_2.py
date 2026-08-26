@@ -97,6 +97,10 @@ def load_shops():
             )
         ).strip()
 
+        if name == "国货严选":
+            print("ℹ️ 国货严选使用淘工厂专用适配器，跳过千牛退款抓取")
+            continue
+
         port = x.get(
             "port"
         )
