@@ -553,10 +553,11 @@ with output_col:
             if not group_items:
                 continue
             st.markdown(f"**{label}**")
-        columns = st.columns(min(len(group_items), 3))
-        for index, item in enumerate(group_items):
-            with columns[index % len(columns)]:
-                render_record_card(item, image_width=240, key_prefix=f"latest_{category}_{index}")
+            column_count = min(len(group_items), 3)
+            columns = st.columns([1] * column_count)
+            for index, item in enumerate(group_items):
+                with columns[index % len(columns)]:
+                    render_record_card(item, image_width=240, key_prefix=f"latest_{category}_{index}")
     else:
         st.info("填写左侧信息后，点击生成，图片会在这里按素材类型展示。")
 
