@@ -1220,11 +1220,18 @@ def _line_points(values: list[float], width: int, height: int, pad: int) -> str:
     return " ".join(f"{x:.1f},{y:.1f}" for x, y in _line_coords(values, width, height, pad))
 
 
-def _line_coords(values: list[float], width: int, height: int, pad: int) -> list[tuple[float, float]]:
+def _line_coords(
+    values: list[float],
+    width: int,
+    height: int,
+    pad: int,
+    axis_low: float = 0.0,
+    axis_high: float | None = None,
+) -> list[tuple[float, float]]:
     if not values:
         return []
-    low = min(values)
-    high = max(values)
+    low = min(axis_low, 0.0)
+    high = axis_high if axis_high is not None else max(values)
     span = high - low if high != low else max(abs(high), 1.0)
     step = (width - pad * 2) / max(len(values) - 1, 1)
     points: list[tuple[float, float]] = []
@@ -1267,17 +1274,17 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360)
     width, chart_height, pad = 640, 280, 58
     sales_values = [float(value) for value in data["sales_qty"]]
     order_values = [float(value) for value in data["order_count"]]
-    sales_coords = _line_coords(sales_values, width, chart_height, pad)
-    order_coords = _line_coords(order_values, width, chart_height, pad)
+    max_sales = max(sales_values) if sales_values else 0
+    max_orders = max(order_values) if order_values else 0
+    axis_high = max(max_sales, max_orders, 1.0) * 1.12
+    sales_coords = _line_coords(sales_values, width, chart_height, pad, 0.0, axis_high)
+    order_coords = _line_coords(order_values, width, chart_height, pad, 0.0, axis_high)
     sales_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in sales_coords)
     order_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in order_coords)
     tick_html = "".join(
         f'<text x="{x:.1f}" y="232" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
         for x, label in _chart_ticks(data)
     )
-    max_sales = max(sales_values) if sales_values else 0
-    max_orders = max(order_values) if order_values else 0
-    low_sales = min(sales_values) if sales_values else 0
     sales_label_x, sales_label_y = sales_coords[-1] if sales_coords else (pad, pad)
     order_label_x, order_label_y = order_coords[-1] if order_coords else (pad, pad)
     st.markdown(
@@ -1293,8 +1300,8 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360)
     <line x1="{pad}" y1="42" x2="610" y2="42" stroke="#e2e8f0" stroke-width="1" />
     <line x1="{pad}" y1="130" x2="610" y2="130" stroke="#e2e8f0" stroke-width="1" />
     <line x1="{pad}" y1="42" x2="{pad}" y2="218" stroke="#cbd5e1" stroke-width="1" />
-    <text x="10" y="46" class="svg-chart-label">{_compact_number(max_sales)}</text>
-    <text x="10" y="222" class="svg-chart-label">{_compact_number(low_sales)}</text>
+    <text x="10" y="46" class="svg-chart-label">{_compact_number(axis_high)}</text>
+    <text x="10" y="222" class="svg-chart-label">0</text>
     <polyline fill="none" stroke="#2563eb" stroke-width="3" points="{sales_points}" />
     <polyline fill="none" stroke="#f59e0b" stroke-width="3" stroke-dasharray="6 5" points="{order_points}" />
     <text x="{min(sales_label_x + 8, 584):.1f}" y="{max(sales_label_y - 8, 18):.1f}" class="svg-chart-label">件数 {_compact_number(sales_values[-1])}</text>
