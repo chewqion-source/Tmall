@@ -16,4 +16,5 @@ Start-Process -FilePath "wscript.exe" -ArgumentList "`"$Target`"" -WindowStyle H
 
 Write-Host "Installed and started local realtime agent."
 Write-Host "Startup item: $Target"
-Write-Host "Manual and scheduled tasks are now handled by realtime_agent.py."
+Write-Host "Manual website tasks are handled by realtime_agent.py."
+Write-Host "Automatic 2-hour schedule is handled only by run_realtime_scheduler_loop.ps1."

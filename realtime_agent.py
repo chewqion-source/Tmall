@@ -36,6 +36,12 @@ REMOTE_STATUS_FILE = os.environ.get(
 
 POLL_SECONDS = int(os.environ.get("TMALL_AGENT_POLL_SECONDS", "30"))
 SCHEDULE_SECONDS = int(os.environ.get("TMALL_AGENT_SCHEDULE_SECONDS", str(2 * 60 * 60)))
+AGENT_ENABLE_SCHEDULE = os.environ.get("TMALL_AGENT_ENABLE_SCHEDULE", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 LOGIN_CHECK_SCRIPT = BASE_DIR / "check_login_status.py"
 SYNC_SKU_SCRIPT = BASE_DIR / "sync_sku_cost.py"
@@ -371,6 +377,8 @@ def local_run_hint() -> str:
 
 
 def should_run_scheduled(state: dict[str, object]) -> bool:
+    if not AGENT_ENABLE_SCHEDULE:
+        return False
     last = parse_dt(state.get("last_scheduled_at"))
     if last is None:
         return True
@@ -431,7 +439,8 @@ def main() -> int:
         poll_once()
         return 0
 
-    write_log(f"agent started, poll={POLL_SECONDS}s, schedule={SCHEDULE_SECONDS}s")
+    schedule_text = f"{SCHEDULE_SECONDS}s" if AGENT_ENABLE_SCHEDULE else "disabled"
+    write_log(f"agent started, poll={POLL_SECONDS}s, schedule={schedule_text}")
     update_status("idle", message="本地守护进程已启动")
     while True:
         try:
