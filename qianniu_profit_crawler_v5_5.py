@@ -1543,7 +1543,20 @@ def write_realtime_snapshot(df):
         date_text = captured_at[:10]
 
         pay_amount = _snapshot_number(row, "支付金额")
+        normal_site_ad_cost = _snapshot_number(row, "普通全站推广消耗")
+        smart_ad_cost = _snapshot_number(row, "智能托管消耗")
+        site_ad_cost = _snapshot_number(row, "全站推广消耗")
+        keyword_ad_cost = _snapshot_number(row, "关键词推广消耗")
+        component_ad_cost = (
+            normal_site_ad_cost
+            +
+            smart_ad_cost
+            +
+            keyword_ad_cost
+        )
         ad_cost = _snapshot_number(row, "总推广消耗")
+        if abs(component_ad_cost - ad_cost) > 0.01:
+            ad_cost = component_ad_cost
         profit = _snapshot_number(row, "实时盈亏")
         break_even_ad_cost = ad_cost + profit
         current_roi = _snapshot_ratio(profit, ad_cost)
@@ -1558,8 +1571,10 @@ def write_realtime_snapshot(df):
                 "product_name": str(row.get("商品名称", "")),
                 "sales_qty": _snapshot_number(row, "支付件数"),
                 "pay_amount": pay_amount,
-                "site_ad_cost": _snapshot_number(row, "全站推广消耗"),
-                "keyword_ad_cost": _snapshot_number(row, "关键词推广消耗"),
+                "normal_site_ad_cost": normal_site_ad_cost,
+                "smart_ad_cost": smart_ad_cost,
+                "site_ad_cost": site_ad_cost,
+                "keyword_ad_cost": keyword_ad_cost,
                 "ad_cost": ad_cost,
                 "promotion_roi": _snapshot_optional_number(row, "推广后台ROI"),
                 "site_promotion_roi": _snapshot_optional_number(row, "全站推广ROI"),
