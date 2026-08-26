@@ -831,7 +831,7 @@ def render_realtime_overview_row(all_daily: pd.DataFrame) -> None:
 
 with st.sidebar:
     st.header("店铺与数据")
-    page_mode = st.radio("页面", ["日报看板", "SKU成本维护"])
+    page_mode = st.radio("页面", ["日报看板", "单品咨询", "SKU成本维护"])
     sidebar_link("财务上传报表", upload_url())
     sidebar_link("投产计算器", roi_url())
     sidebar_link("达人管理", koc_url())
@@ -839,6 +839,17 @@ with st.sidebar:
 
 if page_mode == "SKU成本维护":
     render_sku_cost_manager()
+    st.stop()
+
+if page_mode == "单品咨询":
+    st.title("单品咨询")
+    realtime_daily, realtime_generated_at = load_realtime_snapshot()
+    if realtime_generated_at:
+        st.caption(f"实时数据更新时间：{realtime_generated_at}")
+    if realtime_daily.empty:
+        st.info("暂无实时抓取快照，请等待下一轮抓取后再查询。")
+    else:
+        render_product_profit_consultant(realtime_daily)
     st.stop()
 
 try:
@@ -870,7 +881,6 @@ if not realtime_daily.empty:
     if realtime_generated_at:
         st.caption(f"顶部实时模块更新时间：{realtime_generated_at}。核心趋势仍以财务导入日报为准。")
     render_realtime_overview_row(realtime_daily)
-    render_product_profit_consultant(realtime_daily)
 else:
     st.info("暂无实时抓取快照，顶部暂以财务日报最新日期展示。")
     render_realtime_overview_row(all_daily)
