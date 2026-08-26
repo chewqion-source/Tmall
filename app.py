@@ -25,6 +25,7 @@ from data_loader import (
     validate_known_sample,
 )
 from ui_helpers import ai_image_url, koc_url, roi_url, sidebar_link, upload_url
+from sku_cost_utils import merge_duplicate_sku_cost_rows
 
 
 st.set_page_config(page_title="店铺数据", page_icon="📊", layout="wide")
@@ -651,10 +652,7 @@ def save_sku_cost_frame(data: pd.DataFrame, path: Path = SKU_COST_PATH) -> Path 
         | cleaned["商家编码"].ne("")
         | cleaned["SKU规格"].ne("")
     )
-    cleaned = cleaned[has_key].drop_duplicates(
-        subset=["店铺", "商品ID", "商家编码", "SKU规格"],
-        keep="last",
-    )
+    cleaned = merge_duplicate_sku_cost_rows(cleaned[has_key])
     cleaned.to_excel(path, index=False, sheet_name="SKU成本配置")
     return backup_path
 
