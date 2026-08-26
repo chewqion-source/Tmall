@@ -8,6 +8,8 @@ import time
 import pandas as pd
 import paramiko
 
+from sku_cost_utils import merge_duplicate_sku_cost_rows
+
 
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
@@ -88,10 +90,7 @@ def _save_sku_cost(data: pd.DataFrame, path: Path) -> None:
         | cleaned["商家编码"].fillna("").astype(str).str.strip().ne("")
         | cleaned["SKU规格"].fillna("").astype(str).str.strip().ne("")
     )
-    cleaned = cleaned[has_key].drop_duplicates(
-        subset=["店铺", "商品ID", "商家编码", "SKU规格"],
-        keep="last",
-    )
+    cleaned = merge_duplicate_sku_cost_rows(cleaned[has_key])
     cleaned.to_excel(path, index=False, sheet_name="SKU成本配置")
 
 

@@ -19,6 +19,8 @@ from urllib.parse import parse_qsl, urlencode
 from playwright.async_api import async_playwright
 from openpyxl import Workbook, load_workbook
 
+from sku_cost_utils import normalize_sku_spec
+
 SHOP_NAME = ""
 CDP_PORT = 0
 PAGE_SIZE = 15
@@ -1029,7 +1031,7 @@ def sku_match_key(row):
     shop = clean_text(row.get("店铺") or SHOP_NAME)
     item_id = clean_text(row.get("商品ID") or row.get("item_id"))
     code = clean_text(row.get("商家编码") or row.get("merchant_code"))
-    sku = clean_text(row.get("SKU规格") or row.get("sku_text"))
+    sku = normalize_sku_spec(row.get("SKU规格") or row.get("sku_text"))
 
     if code:
         return ("code", shop, item_id, code)
@@ -1466,7 +1468,7 @@ def load_sku_cost_maps():
             key = (
                 shop,
                 item_id,
-                sku_text_value
+                normalize_sku_spec(sku_text_value)
             )
 
             if key in sku_map:
@@ -1524,7 +1526,7 @@ def match_sku_cost(row, maps):
         key = (
             SHOP_NAME,
             item_id,
-            sku_text_value
+            normalize_sku_spec(sku_text_value)
         )
 
         config = maps[
