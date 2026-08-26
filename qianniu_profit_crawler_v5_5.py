@@ -1525,6 +1525,7 @@ def write_realtime_snapshot(df):
         break_even_ad_cost = ad_cost + profit
         current_roi = _snapshot_ratio(profit, ad_cost)
         break_even_roi = _snapshot_ratio(pay_amount, break_even_ad_cost) if break_even_ad_cost > 0 else None
+        ad_balance = _snapshot_optional_number(row, "账户推广余额")
 
         records.append(
             {
@@ -1542,7 +1543,8 @@ def write_realtime_snapshot(df):
                 "keyword_promotion_roi": _snapshot_optional_number(row, "关键词推广ROI"),
                 "current_roi": current_roi,
                 "break_even_roi": break_even_roi,
-                "ad_balance": _snapshot_optional_number(row, "账户推广余额"),
+                "ad_balance": ad_balance,
+                "ad_balance_source": "promotion_balance_api" if ad_balance is not None else "",
                 "order_count": _snapshot_number(row, "SKU订单数"),
                 "sku_count": _snapshot_number(row, "SKU成交件数"),
                 "merch_cost": _snapshot_number(row, "货品成本"),

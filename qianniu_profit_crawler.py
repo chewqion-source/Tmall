@@ -131,15 +131,24 @@ def nested_value(
 
 
 BALANCE_KEYWORDS = (
-    "balance",
-    "available",
     "accountBalance",
     "availableBalance",
     "availableAmount",
+    "balanceAmount",
+    "agencyAdBalance",
+    "rechargeBalance",
     "cashBalance",
     "可用余额",
     "账户余额",
-    "余额",
+    "剩余余额",
+    "推广余额",
+)
+
+BALANCE_URL_KEYWORDS = (
+    "queryagencyadbalance",
+    "queryrechargeconfig",
+    "adbalance",
+    "rechargeconfig",
 )
 
 
@@ -152,9 +161,9 @@ def _extract_balance_candidates(obj, path=""):
             next_path = f"{path}.{key_text}" if path else key_text
             lower_key = key_text.lower()
 
-            if any(token.lower() in lower_key for token in BALANCE_KEYWORDS):
+            if any(token.lower() == lower_key for token in BALANCE_KEYWORDS):
                 if isinstance(value, dict):
-                    for nested_key in ("value", "amount", "available", "balance", "balanceAmount"):
+                    for nested_key in ("value", "amount", "availableBalance", "balanceAmount"):
                         if nested_key in value:
                             try:
                                 candidates.append((next_path, float(value[nested_key])))
@@ -186,6 +195,8 @@ def _choose_balance(candidates):
             score += 4
         if "balance" in lower_path or "余额" in lower_path:
             score += 3
+        if "agencyad" in lower_path or "推广" in lower_path:
+            score += 3
         if "account" in lower_path or "账户" in lower_path:
             score += 2
         if value > 0:
@@ -208,7 +219,7 @@ def capture_account_balance(page, shop_name, urls):
     def handler(response):
         url = response.url
         lower_url = url.lower()
-        if not any(token in lower_url for token in ("balance", "account", "recharge", "queryagencyadbalance")):
+        if not any(token in lower_url for token in BALANCE_URL_KEYWORDS):
             return
 
         try:
@@ -216,7 +227,8 @@ def capture_account_balance(page, shop_name, urls):
         except Exception:
             return
 
-        balance = _choose_balance(_extract_balance_candidates(data))
+        candidates = _extract_balance_candidates(data)
+        balance = _choose_balance(candidates)
         if balance is not None:
             captured["balance"] = balance
             captured["url"] = url

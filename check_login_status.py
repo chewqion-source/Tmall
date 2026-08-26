@@ -58,6 +58,15 @@ CAPTCHA_TEXT_KEYWORDS = [
     "身份验证",
 ]
 
+RECOVERABLE_BROWSER_KEYWORDS = [
+    "崩溃",
+    "内存不足",
+    "out of memory",
+    "aw snap",
+    "status_breakpoint",
+    "页面无响应",
+]
+
 GOOD_URL_KEYWORDS = [
     "myseller.taobao.com",
     "tgc.tmall.com",
@@ -168,6 +177,41 @@ def pick_page(context):
     return context.new_page()
 
 
+def is_recoverable_browser_problem(text: str) -> bool:
+    return bool(has_keyword(text, RECOVERABLE_BROWSER_KEYWORDS))
+
+
+def recover_page_if_needed(page) -> bool:
+    combined = ""
+    try:
+        combined += page.title(timeout=3_000) + "\n"
+    except Exception:
+        pass
+    try:
+        combined += page.locator("body").inner_text(timeout=3_000)[:3000]
+    except Exception:
+        pass
+    if not is_recoverable_browser_problem(combined):
+        return False
+    try:
+        print("检测到浏览器崩溃/内存不足提示，已自动刷新页面。")
+        page.reload(wait_until="domcontentloaded", timeout=25_000)
+        page.wait_for_timeout(3_000)
+        return True
+    except Exception as exc:
+        print(f"自动刷新失败：{exc}")
+        return False
+
+
+def load_state() -> dict[str, object]:
+    if not STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def check_shop(pw, shop: dict[str, object]) -> dict[str, str]:
     name = str(shop["name"])
     port = int(shop["port"])
@@ -203,6 +247,7 @@ def check_shop(pw, shop: dict[str, object]) -> dict[str, str]:
         except PlaywrightTimeoutError:
             pass
         page.wait_for_timeout(2_000)
+        recover_page_if_needed(page)
 
         url = page.url
         title = ""
@@ -224,6 +269,18 @@ def check_shop(pw, shop: dict[str, object]) -> dict[str, str]:
             return result
 
         combined = f"{title}\n{text[:3000]}"
+        if is_recoverable_browser_problem(combined):
+            recover_page_if_needed(page)
+            try:
+                title = page.title(timeout=5_000)
+            except Exception:
+                title = ""
+            try:
+                text = page.locator("body").inner_text(timeout=5_000)
+            except Exception:
+                text = ""
+            combined = f"{title}\n{text[:3000]}"
+
         captcha_text = has_keyword(combined, CAPTCHA_TEXT_KEYWORDS)
         if captcha_text:
             result["status"] = "bad"
@@ -274,6 +331,13 @@ def main() -> int:
         print("没有启用的店铺，登录检测跳过。")
         return 0
 
+    previous_state = load_state()
+    previous_failed = {
+        f"{item.get('name')}:{item.get('port')}"
+        for item in previous_state.get("results", [])
+        if item.get("status") != "ok"
+    }
+
     with sync_playwright() as pw:
         results = [check_shop(pw, shop) for shop in shops]
 
@@ -286,7 +350,11 @@ def main() -> int:
         print(f"- {mark} {item['name']} / {item['port']}：{item['reason']}")
 
     if failed:
-        send_feishu_alert(failed)
+        new_failed = [item for item in failed if f"{item.get('name')}:{item.get('port')}" not in previous_failed]
+        if new_failed:
+            send_feishu_alert(new_failed)
+        else:
+            print("登录/验证码异常仍未恢复，本次不重复发送飞书提醒。")
         return 20
 
     return 0

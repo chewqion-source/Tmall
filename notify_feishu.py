@@ -65,12 +65,15 @@ def _snapshot_summary() -> dict[str, object]:
         raise RuntimeError("实时快照没有 records")
 
     data = pd.DataFrame(records)
+    if "ad_balance_source" not in data.columns:
+        data["ad_balance_source"] = ""
     for column in ["profit", "pay_amount", "ad_cost", "ad_balance", "sales_qty", "order_count"]:
         if column not in data.columns:
             data[column] = None if column == "ad_balance" else 0
         data[column] = pd.to_numeric(data[column], errors="coerce")
         if column != "ad_balance":
             data[column] = data[column].fillna(0)
+    data.loc[data["ad_balance_source"].astype(str) != "promotion_balance_api", "ad_balance"] = pd.NA
 
     store_summary = (
         data.groupby("store", as_index=False)

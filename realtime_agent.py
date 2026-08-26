@@ -222,6 +222,21 @@ def run_pipeline(reason: str, task: dict[str, object] | None = None, skip_login:
     if reason in {"scheduled", "manual"}:
         touch_schedule_clock()
 
+    state_before_lock = load_local_state()
+    if state_before_lock.get("login_blocked") and not skip_login:
+        message = str(state_before_lock.get("login_blocked_message") or "登录/验证码未恢复，暂停抓取")
+        update_status(
+            "paused",
+            reason=reason,
+            run_id=run_id,
+            message=message,
+            blocked_since=state_before_lock.get("login_blocked_at"),
+        )
+        if task:
+            update_task(task, "paused", message=message, blocked_since=state_before_lock.get("login_blocked_at"))
+        write_log(f"pipeline paused without repeated login check: {message}")
+        return 20
+
     try:
         lock_stream = LOCK_FILE.open("a+")
     except OSError as exc:
@@ -260,10 +275,20 @@ def run_pipeline(reason: str, task: dict[str, object] | None = None, skip_login:
             with log_file.open("a", encoding="utf-8") as handle:
                 handle.write(f"\n[{now_text()}] login check skipped by manual confirmation\n")
             login_code = 0
+            state = load_local_state()
+            state.pop("login_blocked", None)
+            state.pop("login_blocked_at", None)
+            state.pop("login_blocked_message", None)
+            save_local_state(state)
         else:
             login_code = run_command("login check", [PYTHON, str(LOGIN_CHECK_SCRIPT)], log_file)
         if login_code == 20:
             message = "检测到登录失效或验证码，暂停抓取，等待登录恢复"
+            state = load_local_state()
+            state["login_blocked"] = True
+            state["login_blocked_at"] = now_text()
+            state["login_blocked_message"] = message
+            save_local_state(state)
             update_status("paused", reason=reason, run_id=run_id, message=message, log_file=str(log_file))
             if task:
                 update_task(task, "paused", message=message)
@@ -274,6 +299,13 @@ def run_pipeline(reason: str, task: dict[str, object] | None = None, skip_login:
             if task:
                 update_task(task, "failed", message=message)
             return login_code
+
+        state = load_local_state()
+        if state.get("login_blocked"):
+            state.pop("login_blocked", None)
+            state.pop("login_blocked_at", None)
+            state.pop("login_blocked_message", None)
+            save_local_state(state)
 
         steps = [
             ("sync sku cost pull", [PYTHON, str(SYNC_SKU_SCRIPT), "pull"], 3),
