@@ -419,6 +419,10 @@ def load_shops():
             shop.get("search_url", "")
         ).strip()
 
+        smart_site_url = str(
+            shop.get("smart_site_url", "")
+        ).strip()
+
         # 生意参谋是核心数据源，必须有。
         if not sycm_url:
 
@@ -457,6 +461,9 @@ def load_shops():
 
             "search_url":
                 search_url,
+
+            "smart_site_url":
+                smart_site_url,
 
         })
 
@@ -2624,8 +2631,14 @@ def merge_and_calculate(
     shop,
     business_df,
     site_df,
-    search_df
+    search_df,
+    smart_df=None
 ):
+
+    if smart_df is None:
+        smart_df = empty_playroad_df(
+            "智能托管"
+        )
 
     result = (
         business_df
@@ -2636,6 +2649,11 @@ def merge_and_calculate(
         )
         .merge(
             search_df,
+            on="商品ID",
+            how="left"
+        )
+        .merge(
+            smart_df,
             on="商品ID",
             how="left"
         )
@@ -2658,6 +2676,11 @@ def merge_and_calculate(
         "全站推广点击",
         "全站推广ROI",
 
+        "智能托管消耗",
+        "智能托管成交金额",
+        "智能托管点击",
+        "智能托管ROI",
+
         "关键词推广消耗",
         "关键词推广成交金额",
         "关键词推广点击",
@@ -2672,6 +2695,55 @@ def merge_and_calculate(
         result[col] = clean_numeric(
             result[col]
         )
+
+    result["普通全站推广消耗"] = result[
+        "全站推广消耗"
+    ]
+    result["普通全站推广成交金额"] = result[
+        "全站推广成交金额"
+    ]
+    result["普通全站推广点击"] = result[
+        "全站推广点击"
+    ]
+    result["普通全站推广ROI"] = result[
+        "全站推广ROI"
+    ]
+
+    full_site_charge = (
+        result["普通全站推广消耗"]
+        +
+        result["智能托管消耗"]
+    )
+    full_site_roi_weighted = (
+        result["普通全站推广ROI"]
+        *
+        result["普通全站推广消耗"]
+        +
+        result["智能托管ROI"]
+        *
+        result["智能托管消耗"]
+    )
+
+    result["全站推广消耗"] = (
+        full_site_charge
+    )
+    result["全站推广成交金额"] = (
+        result["普通全站推广成交金额"]
+        +
+        result["智能托管成交金额"]
+    )
+    result["全站推广点击"] = (
+        result["普通全站推广点击"]
+        +
+        result["智能托管点击"]
+    )
+    result["全站推广ROI"] = np.where(
+        full_site_charge > 0,
+        full_site_roi_weighted
+        /
+        full_site_charge,
+        0.0
+    )
 
     # --------------------------------------------------------
     # 总推广消耗
@@ -2912,6 +2984,12 @@ def merge_and_calculate(
     money_cols = [
         "支付金额",
 
+        "普通全站推广消耗",
+        "普通全站推广成交金额",
+
+        "智能托管消耗",
+        "智能托管成交金额",
+
         "全站推广消耗",
         "全站推广成交金额",
 
@@ -2961,6 +3039,8 @@ def merge_and_calculate(
         "支付件数",
         "支付金额",
 
+        "普通全站推广消耗",
+        "智能托管消耗",
         "全站推广消耗",
         "关键词推广消耗",
         "总推广消耗",
@@ -2996,6 +3076,14 @@ def merge_and_calculate(
         "全站推广成交金额",
         "全站推广点击",
         "全站推广ROI",
+
+        "普通全站推广成交金额",
+        "普通全站推广点击",
+        "普通全站推广ROI",
+
+        "智能托管成交金额",
+        "智能托管点击",
+        "智能托管ROI",
 
         "关键词推广成交金额",
         "关键词推广点击",
@@ -3250,7 +3338,48 @@ def run_shop(
         )
 
         # ====================================================
-        # 3. 关键词推广
+        # 3. 全店智能 / 智能托管
+        # ====================================================
+
+        smart_url = (
+            shop.get(
+                "smart_site_url",
+                ""
+            )
+            or
+            ""
+        ).strip()
+
+        site_url = (
+            shop.get(
+                "site_url",
+                ""
+            )
+            or
+            ""
+        ).strip()
+
+        if (
+            smart_url
+            and
+            smart_url != site_url
+        ):
+            smart_df = (
+                crawl_playroad_optional(
+                    page,
+                    smart_url,
+                    "onebpSite",
+                    "智能托管",
+                    name
+                )
+            )
+        else:
+            smart_df = empty_playroad_df(
+                "智能托管"
+            )
+
+        # ====================================================
+        # 4. 关键词推广
         #
         # 咖时光目前没开：
         # 自动返回0
@@ -3273,7 +3402,7 @@ def run_shop(
         )
 
         # ====================================================
-        # 4. 合并计算
+        # 5. 合并计算
         # ====================================================
 
         result = (
@@ -3281,7 +3410,8 @@ def run_shop(
                 shop,
                 business_df,
                 site_df,
-                search_df
+                search_df,
+                smart_df
             )
         )
 
@@ -3290,6 +3420,7 @@ def run_shop(
             name,
             [
                 shop.get("site_url", ""),
+                shop.get("smart_site_url", ""),
                 shop.get("search_url", ""),
             ]
         )
@@ -3320,6 +3451,22 @@ def run_shop(
             clean_numeric(
                 result[
                     "全站推广消耗"
+                ]
+            ).sum()
+        )
+
+        total_normal_site = float(
+            clean_numeric(
+                result[
+                    "普通全站推广消耗"
+                ]
+            ).sum()
+        )
+
+        total_smart = float(
+            clean_numeric(
+                result[
+                    "智能托管消耗"
                 ]
             ).sum()
         )
@@ -3377,7 +3524,15 @@ def run_shop(
         )
 
         print(
-            f"全站推广：¥{total_site:.2f}"
+            f"普通全站推广：¥{total_normal_site:.2f}"
+        )
+
+        print(
+            f"智能托管：¥{total_smart:.2f}"
+        )
+
+        print(
+            f"全站推广合计：¥{total_site:.2f}"
         )
 
         print(
@@ -3588,6 +3743,22 @@ def main():
             ).sum()
         )
 
+        total_normal_site = float(
+            clean_numeric(
+                combined[
+                    "普通全站推广消耗"
+                ]
+            ).sum()
+        )
+
+        total_smart = float(
+            clean_numeric(
+                combined[
+                    "智能托管消耗"
+                ]
+            ).sum()
+        )
+
         total_search = float(
             clean_numeric(
                 combined[
@@ -3621,7 +3792,15 @@ def main():
         )
 
         print(
-            f"全站推广消耗：¥{total_site:.2f}"
+            f"普通全站推广消耗：¥{total_normal_site:.2f}"
+        )
+
+        print(
+            f"智能托管消耗：¥{total_smart:.2f}"
+        )
+
+        print(
+            f"全站推广合计：¥{total_site:.2f}"
         )
 
         print(
