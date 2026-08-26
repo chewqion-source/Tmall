@@ -344,6 +344,17 @@ def change_query_param(
     )
 
 
+def extract_query_number(
+    url,
+    key
+):
+    match = re.search(
+        rf"(?:[?&#]|%26){re.escape(key)}=([0-9]+)",
+        str(url)
+    )
+    return match.group(1) if match else ""
+
+
 # ============================================================
 # shops.json
 # ============================================================
@@ -1089,6 +1100,24 @@ def _find_nested_material(record):
     if not isinstance(record, dict):
         return None, ""
 
+    direct_item_id = normalize_id(
+        record.get("itemId")
+    )
+
+    if direct_item_id:
+        return (
+            direct_item_id,
+            str(
+                record.get("title", "")
+                or
+                record.get("itemName", "")
+                or
+                record.get("materialName", "")
+                or
+                ""
+            )
+        )
+
     direct_id = normalize_id(
         record.get("materialId")
     )
@@ -1167,6 +1196,24 @@ def _find_report_owner_material(record):
 
     if not isinstance(record, dict):
         return None, ""
+
+    direct_item_id = normalize_id(
+        record.get("itemId")
+    )
+
+    if direct_item_id:
+        return (
+            direct_item_id,
+            str(
+                record.get("title", "")
+                or
+                record.get("itemName", "")
+                or
+                record.get("materialName", "")
+                or
+                ""
+            )
+        )
 
     direct_id = normalize_id(
         record.get("materialId")
@@ -1268,6 +1315,10 @@ def parse_playroad_records(
         material_name = (
             nested_name
             or
+            str(record.get("title", "") or "")
+            or
+            str(record.get("itemName", "") or "")
+            or
             str(record.get("materialName", "") or "")
             or
             str(record.get("adgroupName", "") or "")
@@ -1305,6 +1356,18 @@ def parse_playroad_records(
                     "roi"
                 ),
 
+            "campaignId":
+                normalize_id(
+                    record.get("campaignId")
+                ),
+
+            "campaignName":
+                str(
+                    record.get("campaignName", "")
+                    or
+                    ""
+                ),
+
             "_report_count":
                 len(report_list),
 
@@ -1314,6 +1377,7 @@ def parse_playroad_records(
                         "materialId": material_id,
                         "campaignId": record.get("campaignId"),
                         "adgroupId": record.get("adgroupId"),
+                        "itemId": record.get("itemId"),
                         "campaignName": record.get("campaignName", ""),
                         "reportInfoList": report_list,
                     },
@@ -1484,12 +1548,31 @@ def capture_findpage_request(
         return None
 
     candidates = []
+    smart_campaign_id = ""
+
+    if source_name == "智能托管":
+        smart_campaign_id = extract_query_number(
+            url,
+            "campaignId"
+        )
 
     def handler(response):
 
-        if (
+        is_findpage = (
             PLAYROAD_FINDPAGE_KEYWORD
-            not in response.url
+            in response.url
+        )
+
+        allow_smart_get_response = (
+            source_name
+            ==
+            "智能托管"
+        )
+
+        if (
+            not is_findpage
+            and
+            not allow_smart_get_response
         ):
             return
 
@@ -1497,15 +1580,21 @@ def capture_findpage_request(
 
             request = response.request
 
-            post_data = (
-                request.post_data_json
-            )
+            post_data = None
+            try:
+                post_data = (
+                    request.post_data_json
+                )
+            except Exception:
+                post_data = None
 
             if not isinstance(
                 post_data,
                 dict
             ):
-                return
+                if not allow_smart_get_response:
+                    return
+                post_data = {}
 
             biz_code = (
                 post_data.get(
@@ -1519,8 +1608,19 @@ def capture_findpage_request(
 
             if (
                 biz_code
+                and
+                biz_code
                 !=
                 expected_bizcode
+            ):
+                return
+
+            if (
+                source_name == "智能托管"
+                and
+                smart_campaign_id
+                and
+                smart_campaign_id not in response.url
             ):
                 return
 
@@ -1535,6 +1635,12 @@ def capture_findpage_request(
 
             if score[2] <= 0:
                 return
+
+            raw_only = (
+                not is_findpage
+                or
+                not post_data
+            )
 
             candidates.append({
 
@@ -1551,6 +1657,16 @@ def capture_findpage_request(
 
                 "score":
                     score,
+
+                "raw_only":
+                    raw_only,
+
+                "is_smart_item_detail":
+                    (
+                        source_name == "智能托管"
+                        and
+                        "item/horizontal/findPage.json" in response.url
+                    ),
 
             })
 
@@ -1573,11 +1689,46 @@ def capture_findpage_request(
     except Exception:
         pass
 
+    if smart_campaign_id:
+
+        try:
+
+            detail_hash = (
+                "!/manage/onesite-detail"
+                "?mx_bizCode=onebpSite"
+                "&bizCode=onebpSite"
+                "&tab="
+                "&effectEqual=15"
+                "&unifyType=last_click_by_effect_time"
+                "&itemSelectedModeList=shop%2Cgroup"
+                f"&campaignId={smart_campaign_id}"
+            )
+
+            page.evaluate(
+                """
+                hash => {
+                    window.location.hash = hash;
+                    window.dispatchEvent(
+                        new HashChangeEvent(
+                            "hashchange"
+                        )
+                    );
+                }
+                """,
+                detail_hash
+            )
+
+        except Exception:
+            pass
+
     # --------------------------------------------------------
     # 等页面真实接口
     # --------------------------------------------------------
 
     page.wait_for_timeout(
+        20000
+        if smart_campaign_id
+        else
         12000
     )
 
@@ -1613,6 +1764,21 @@ def capture_findpage_request(
             f"ℹ️ [{shop_name}] 当前未检测到 {source_name} 数据，本次按 0 处理"
         )
 
+        if source_name == "智能托管":
+            save_promotion_debug(
+                shop_name,
+                source_name,
+                {
+                    "status": "not_detected",
+                    "page_url": url,
+                    "expected_bizcode": expected_bizcode,
+                },
+                [],
+                empty_playroad_df(
+                    source_name
+                )
+            )
+
         return None
 
     # --------------------------------------------------------
@@ -1633,9 +1799,15 @@ def capture_findpage_request(
     # --------------------------------------------------------
 
     candidates.sort(
-        key=lambda x: x[
-            "score"
-        ],
+        key=lambda x: (
+            1
+            if x.get("is_smart_item_detail")
+            else
+            0,
+            x[
+                "score"
+            ],
+        ),
         reverse=True
     )
 
@@ -1719,6 +1891,13 @@ def aggregate_playroad_rows(
             raw_df[col]
         )
 
+    for col in [
+        "campaignId",
+        "campaignName",
+    ]:
+        if col not in raw_df.columns:
+            raw_df[col] = ""
+
     weighted_roi_col = (
         f"_{source_name}ROI加权值"
     )
@@ -1757,6 +1936,12 @@ def aggregate_playroad_rows(
             f"{source_name}商品名称":
                 "first",
 
+            "campaignId":
+                "first",
+
+            "campaignName":
+                "first",
+
         })
     )
 
@@ -1783,6 +1968,54 @@ def aggregate_playroad_rows(
     return agg
 
 
+def filter_playroad_rows_by_campaign(
+    rows,
+    include_campaign_id="",
+    exclude_campaign_id=""
+):
+    include_campaign_id = normalize_id(
+        include_campaign_id
+    )
+    exclude_campaign_id = normalize_id(
+        exclude_campaign_id
+    )
+
+    if (
+        not include_campaign_id
+        and
+        not exclude_campaign_id
+    ):
+        return rows
+
+    filtered = []
+    for row in rows:
+        campaign_id = normalize_id(
+            row.get("campaignId")
+        )
+
+        if (
+            include_campaign_id
+            and
+            campaign_id
+            !=
+            include_campaign_id
+        ):
+            continue
+
+        if (
+            exclude_campaign_id
+            and
+            campaign_id
+            ==
+            exclude_campaign_id
+        ):
+            continue
+
+        filtered.append(row)
+
+    return filtered
+
+
 # ============================================================
 # Playroad 分页
 # V4.2:
@@ -1795,7 +2028,9 @@ def crawl_playroad(
     url,
     expected_bizcode,
     source_name,
-    shop_name
+    shop_name,
+    include_campaign_id="",
+    exclude_campaign_id=""
 ):
 
     print(
@@ -1829,6 +2064,150 @@ def crawl_playroad(
     base_payload = copy.deepcopy(
         captured["payload"]
     )
+
+    if (
+        include_campaign_id
+        or
+        exclude_campaign_id
+    ) and (
+        captured.get("raw_only")
+        or
+        captured.get("is_smart_item_detail")
+    ):
+        filtered_rows = parse_playroad_records(
+            captured["data"],
+            source_name
+        )
+        filtered_rows = filter_playroad_rows_by_campaign(
+            filtered_rows,
+            include_campaign_id,
+            exclude_campaign_id
+        )
+
+        agg = aggregate_playroad_rows(
+            filtered_rows,
+            source_name
+        )
+        save_promotion_debug(
+            shop_name,
+            source_name,
+            {
+                "status": "captured_response_campaign_filtered",
+                "response_url": request_url,
+                "score": captured.get("score"),
+                "include_campaign_id": include_campaign_id,
+                "exclude_campaign_id": exclude_campaign_id,
+            },
+            [
+                {
+                    "page": 1,
+                    "offset": 0,
+                    "products": len(agg),
+                    "charge": round(
+                        float(
+                            clean_numeric(
+                                agg.get(
+                                    f"{source_name}消耗",
+                                    pd.Series(dtype="float64")
+                                )
+                            ).sum()
+                        ),
+                        2
+                    ),
+                }
+            ],
+            agg
+        )
+
+        total_charge = 0.0
+        if not agg.empty:
+            total_charge = float(
+                clean_numeric(
+                    agg[
+                        f"{source_name}消耗"
+                    ]
+                ).sum()
+            )
+
+        print(
+            f"✅ [{shop_name}] {source_name}："
+            f"按计划过滤 {len(agg)} 个商品，"
+            f"总消耗 ¥{total_charge:.2f}"
+        )
+        return agg
+
+    if captured.get("raw_only"):
+        raw_rows = parse_playroad_records(
+            captured["data"],
+            source_name
+        )
+        raw_rows = filter_playroad_rows_by_campaign(
+            raw_rows,
+            include_campaign_id,
+            exclude_campaign_id
+        )
+        agg = aggregate_playroad_rows(
+            raw_rows,
+            source_name
+        )
+        save_promotion_debug(
+            shop_name,
+            source_name,
+            {
+                "status": "raw_response_only",
+                "response_url": request_url,
+                "score": captured.get("score"),
+            },
+            [
+                {
+                    "page": 1,
+                    "offset": 0,
+                    "products": int(
+                        captured.get("score", [0, 0, 0, 0])[2]
+                    ),
+                    "charge": round(
+                        float(
+                            captured.get("score", [0, 0, 0, 0])[3]
+                            or
+                            0
+                        ),
+                        2
+                    ),
+                }
+            ],
+            agg
+        )
+
+        if agg.empty:
+            return empty_playroad_df(
+                source_name
+            )
+
+        total_charge = float(
+            clean_numeric(
+                agg[
+                    f"{source_name}消耗"
+                ]
+            ).sum()
+        )
+        active_count = int(
+            (
+                clean_numeric(
+                    agg[
+                        f"{source_name}消耗"
+                    ]
+                )
+                >
+                0
+            ).sum()
+        )
+        print(
+            f"✅ [{shop_name}] {source_name}："
+            f"原始响应聚合 {len(agg)} 个商品，"
+            f"有消耗 {active_count} 个，"
+            f"总消耗 ¥{total_charge:.2f}"
+        )
+        return agg
 
     # ========================================================
     # 第一页
@@ -1906,6 +2285,11 @@ def crawl_playroad(
             first_data,
             source_name
         )
+    )
+    all_rows = filter_playroad_rows_by_campaign(
+        all_rows,
+        include_campaign_id,
+        exclude_campaign_id
     )
 
     # --------------------------------------------------------
@@ -2140,6 +2524,11 @@ def crawl_playroad(
                 data,
                 source_name
             )
+        )
+        rows = filter_playroad_rows_by_campaign(
+            rows,
+            include_campaign_id,
+            exclude_campaign_id
         )
 
         if not rows:
@@ -2401,7 +2790,9 @@ def crawl_playroad_optional(
     url,
     expected_bizcode,
     source_name,
-    shop_name
+    shop_name,
+    include_campaign_id="",
+    exclude_campaign_id=""
 ):
 
     try:
@@ -2411,7 +2802,9 @@ def crawl_playroad_optional(
             url,
             expected_bizcode,
             source_name,
-            shop_name
+            shop_name,
+            include_campaign_id,
+            exclude_campaign_id
         )
 
     except Exception as e:
@@ -3324,23 +3717,6 @@ def run_shop(
         # 当前没有也不会让店铺失败
         # ====================================================
 
-        site_df = (
-            crawl_playroad_optional(
-                page,
-                shop.get(
-                    "site_url",
-                    ""
-                ),
-                "onebpSite",
-                "全站推广",
-                name
-            )
-        )
-
-        # ====================================================
-        # 3. 全店智能 / 智能托管
-        # ====================================================
-
         smart_url = (
             shop.get(
                 "smart_site_url",
@@ -3359,7 +3735,45 @@ def run_shop(
             ""
         ).strip()
 
+        smart_campaign_id = extract_query_number(
+            smart_url,
+            "campaignId"
+        )
+
+        site_df = (
+            crawl_playroad_optional(
+                page,
+                shop.get(
+                    "site_url",
+                    ""
+                ),
+                "onebpSite",
+                "全站推广",
+                name,
+                exclude_campaign_id=smart_campaign_id
+            )
+        )
+
+        # ====================================================
+        # 3. 全店智能 / 智能托管
+        # ====================================================
+
         if (
+            smart_campaign_id
+            and
+            smart_url
+        ):
+            smart_df = (
+                crawl_playroad_optional(
+                    page,
+                    smart_url,
+                    "onebpSite",
+                    "智能托管",
+                    name,
+                    include_campaign_id=smart_campaign_id
+                )
+            )
+        elif (
             smart_url
             and
             smart_url != site_url
