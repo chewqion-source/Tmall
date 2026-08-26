@@ -43,10 +43,12 @@ def normalize_sku_spec(value: object) -> str:
 
 def sku_cost_merge_key(row: pd.Series | dict[str, object]) -> tuple[str, str, str, str]:
     store = clean_text(row.get("店铺", ""))
-    product_id = clean_text(row.get("商品ID", ""))
+    item_id = clean_text(row.get("商品ID", ""))
     merchant_code = clean_text(row.get("商家编码", ""))
     sku_spec = normalize_sku_spec(row.get("SKU规格", ""))
-    return store, product_id, merchant_code, sku_spec
+    if sku_spec:
+        return store, item_id, "", sku_spec
+    return store, item_id, merchant_code, ""
 
 
 def _first_non_empty(values: pd.Series) -> str:
