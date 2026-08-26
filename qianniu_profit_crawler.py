@@ -321,6 +321,12 @@ def load_shops():
         if not name:
             continue
 
+        if name == "国货严选":
+            print(
+                "ℹ️ 国货严选使用专用适配器，本阶段跳过普通三店抓取"
+            )
+            continue
+
         try:
 
             port = int(

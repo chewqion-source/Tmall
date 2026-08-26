@@ -88,7 +88,7 @@ def load_shops() -> list[dict[str, object]]:
             {
                 "name": PORT_LABELS.get(port) or str(raw.get("name") or f"端口{port}"),
                 "port": port,
-                "test_url": TEST_URL,
+                "test_url": GUOHUO_TEST_URL if port == 9225 else TEST_URL,
             }
         )
     if not any(int(shop["port"]) == 9225 for shop in shops):
