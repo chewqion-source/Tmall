@@ -1021,22 +1021,21 @@ async def crawl_all_pages(page):
 def sku_match_key(row):
     """
     成本配置唯一键：
-    1. 有商家编码：店铺 + 商品ID + 商家编码
-    2. 无商家编码：店铺 + 商品ID + SKU规格
+    1. 有 SKU 规格：店铺 + 商品ID + SKU规格
+    2. 无 SKU 规格：店铺 + 商品ID + 商家编码
 
-    这样即使部分 SKU 暂时没有商家编码，也能先进入成本表。
-    后续补了商家编码后，程序会新增一条新的正式编码记录，
-    不会覆盖旧记录。
+    同一个颜色分类/规格后续补商家编码时，更新原记录，
+    避免成本维护表出现同规格重复行。
     """
     shop = clean_text(row.get("店铺") or SHOP_NAME)
     item_id = clean_text(row.get("商品ID") or row.get("item_id"))
     code = clean_text(row.get("商家编码") or row.get("merchant_code"))
     sku = normalize_sku_spec(row.get("SKU规格") or row.get("sku_text"))
 
-    if code:
-        return ("code", shop, item_id, code)
+    if sku:
+        return ("sku", shop, item_id, sku)
 
-    return ("sku", shop, item_id, sku)
+    return ("code", shop, item_id, code)
 
 
 def ensure_sku_cost_workbook(order_rows):

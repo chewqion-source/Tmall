@@ -222,21 +222,6 @@ def run_pipeline(reason: str, task: dict[str, object] | None = None, skip_login:
     if reason in {"scheduled", "manual"}:
         touch_schedule_clock()
 
-    state_before_lock = load_local_state()
-    if state_before_lock.get("login_blocked") and not skip_login:
-        message = str(state_before_lock.get("login_blocked_message") or "登录/验证码未恢复，暂停抓取")
-        update_status(
-            "paused",
-            reason=reason,
-            run_id=run_id,
-            message=message,
-            blocked_since=state_before_lock.get("login_blocked_at"),
-        )
-        if task:
-            update_task(task, "paused", message=message, blocked_since=state_before_lock.get("login_blocked_at"))
-        write_log(f"pipeline paused without repeated login check: {message}")
-        return 20
-
     try:
         lock_stream = LOCK_FILE.open("a+")
     except OSError as exc:

@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import os
+import subprocess
 import sys
 import time
 from urllib.request import Request, urlopen
@@ -22,6 +23,12 @@ CONFIG_FILE = BASE_DIR / "config" / "feishu_webhook.json"
 STATE_FILE = BASE_DIR / "logs" / "scheduled" / "login_status_state.json"
 TEST_URL = "https://myseller.taobao.com/home.htm/trade-platform/tp/sold"
 GUOHUO_TEST_URL = "https://tgc.tmall.com/ds/page/supplier/product-data?from=menu"
+CHROME_PROFILE_ROOT = BASE_DIR / "chrome_profiles"
+CHROME_CANDIDATES = [
+    Path(os.environ.get("CHROME_PATH", "")),
+    Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+    Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+]
 
 PORT_LABELS = {
     9222: "易丽洁",
@@ -89,6 +96,7 @@ def load_shops() -> list[dict[str, object]]:
                 "name": PORT_LABELS.get(port) or str(raw.get("name") or f"端口{port}"),
                 "port": port,
                 "test_url": GUOHUO_TEST_URL if port == 9225 else TEST_URL,
+                "profile": str(raw.get("profile") or raw.get("name") or f"shop_{port}"),
             }
         )
     if not any(int(shop["port"]) == 9225 for shop in shops):
@@ -97,9 +105,124 @@ def load_shops() -> list[dict[str, object]]:
                 "name": PORT_LABELS[9225],
                 "port": 9225,
                 "test_url": GUOHUO_TEST_URL,
+                "profile": "国货严选",
             }
         )
     return shops
+
+
+def powershell_json(script: str) -> dict[str, object] | None:
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", script],
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except Exception:
+        return None
+    text = result.stdout.strip()
+    if not text:
+        return None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, list):
+        return payload[0] if payload else None
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def get_chrome_command_for_port(port: int) -> tuple[int | None, str]:
+    script = (
+        "$p = Get-CimInstance Win32_Process | "
+        "Where-Object { $_.Name -eq 'chrome.exe' "
+        f"-and $_.CommandLine -match 'remote-debugging-port={port}(\\s|$)' "
+        "-and $_.CommandLine -notmatch '--type=' } | "
+        "Select-Object -First 1 ProcessId,CommandLine; "
+        "if ($p) { $p | ConvertTo-Json -Compress }"
+    )
+    payload = powershell_json(script)
+    if not payload:
+        return None, ""
+    return int(payload.get("ProcessId") or 0), str(payload.get("CommandLine") or "")
+
+
+def find_chrome_exe() -> Path | None:
+    for candidate in CHROME_CANDIDATES:
+        if str(candidate) and candidate.exists():
+            return candidate
+    return None
+
+
+def fallback_chrome_command(shop: dict[str, object]) -> str:
+    chrome = find_chrome_exe()
+    if not chrome:
+        return ""
+    port = int(shop["port"])
+    profile_name = str(shop.get("profile") or shop.get("name") or f"shop_{port}")
+    profile_dir = CHROME_PROFILE_ROOT / profile_name
+    if not profile_dir.exists():
+        name_profile = CHROME_PROFILE_ROOT / str(shop.get("name") or "")
+        if name_profile.exists():
+            profile_dir = name_profile
+    url = str(shop.get("test_url") or TEST_URL)
+    return (
+        f'"{chrome}" --remote-debugging-address=127.0.0.1 '
+        f"--remote-debugging-port={port} "
+        f'--user-data-dir="{profile_dir}" --start-maximized "{url}"'
+    )
+
+
+def restart_chrome_for_shop(shop: dict[str, object]) -> bool:
+    port = int(shop["port"])
+    pid, command = get_chrome_command_for_port(port)
+    if pid:
+        try:
+            subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force"],
+                cwd=str(BASE_DIR),
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            time.sleep(4)
+        except Exception as exc:
+            print(f"auto restart failed to stop port {port}: {exc}")
+            return False
+    if not command:
+        command = fallback_chrome_command(shop)
+    if not command:
+        print(f"auto restart skipped for port {port}: chrome launch command not found")
+        return False
+    try:
+        subprocess.Popen(
+            command,
+            cwd=str(BASE_DIR),
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print(f"auto restarted browser port {port}")
+        time.sleep(10)
+        return True
+    except Exception as exc:
+        print(f"auto restart failed for port {port}: {exc}")
+        return False
+
+
+def is_cdp_hang(result: dict[str, str]) -> bool:
+    reason = str(result.get("reason") or "")
+    return (
+        result.get("status") != "ok"
+        and "connect_over_cdp" in reason
+        and ("Timeout" in reason or "timeout" in reason)
+    )
 
 
 def load_feishu_config() -> tuple[str, str]:
@@ -340,6 +463,17 @@ def main() -> int:
 
     with sync_playwright() as pw:
         results = [check_shop(pw, shop) for shop in shops]
+
+        hung_ports = {int(item["port"]) for item in results if is_cdp_hang(item)}
+        if hung_ports:
+            print(
+                "检测到浏览器调试连接假死，自动重启对应端口后复查："
+                + ", ".join(str(port) for port in sorted(hung_ports))
+            )
+            for shop in shops:
+                if int(shop["port"]) in hung_ports:
+                    restart_chrome_for_shop(shop)
+            results = [check_shop(pw, shop) for shop in shops]
 
     save_state(results)
     failed = [item for item in results if item["status"] != "ok"]
