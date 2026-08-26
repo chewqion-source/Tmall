@@ -1548,9 +1548,7 @@ def write_realtime_snapshot(df):
         site_ad_cost = _snapshot_number(row, "全站推广消耗")
         keyword_ad_cost = _snapshot_number(row, "关键词推广消耗")
         component_ad_cost = (
-            normal_site_ad_cost
-            +
-            smart_ad_cost
+            site_ad_cost
             +
             keyword_ad_cost
         )

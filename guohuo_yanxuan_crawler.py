@@ -159,7 +159,7 @@ async def fetch_hosting(page) -> pd.DataFrame:
             roi = gmv / ad_cost
         rows.append({
             "商品ID": _text(item.get("itemId")),
-            "智能托管消耗": ad_cost,
+            "智能托管消耗": 0.0,
             "全站推广消耗": ad_cost,
             "全站推广成交金额": gmv,
             "全站推广点击": _num(item.get("clickCnt")),

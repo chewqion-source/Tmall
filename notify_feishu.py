@@ -88,21 +88,40 @@ def _snapshot_summary() -> dict[str, object]:
             data[column] = data[column].fillna(0)
     data.loc[data["ad_balance_source"].astype(str) != "promotion_balance_api", "ad_balance"] = pd.NA
 
-    component_ad_cost = (
+    site_keyword_ad_cost = (
+        data["site_ad_cost"]
+        +
+        data["keyword_ad_cost"]
+    )
+    has_site_keyword_ad_cost = (
+        data[["site_ad_cost", "keyword_ad_cost"]]
+        .abs()
+        .sum(axis=1)
+        >
+        0
+    )
+    data.loc[has_site_keyword_ad_cost, "ad_cost"] = site_keyword_ad_cost[has_site_keyword_ad_cost]
+
+    legacy_component_ad_cost = (
         data["normal_site_ad_cost"]
         +
         data["smart_ad_cost"]
         +
         data["keyword_ad_cost"]
     )
-    has_component_ad_cost = (
+    has_legacy_component_ad_cost = (
         data[["normal_site_ad_cost", "smart_ad_cost", "keyword_ad_cost"]]
         .abs()
         .sum(axis=1)
         >
         0
     )
-    data.loc[has_component_ad_cost, "ad_cost"] = component_ad_cost[has_component_ad_cost]
+    legacy_only = (
+        ~has_site_keyword_ad_cost
+        &
+        has_legacy_component_ad_cost
+    )
+    data.loc[legacy_only, "ad_cost"] = legacy_component_ad_cost[legacy_only]
 
     store_summary = (
         data.groupby("store", as_index=False)
@@ -111,6 +130,7 @@ def _snapshot_summary() -> dict[str, object]:
             pay_amount=("pay_amount", "sum"),
             normal_site_ad_cost=("normal_site_ad_cost", "sum"),
             smart_ad_cost=("smart_ad_cost", "sum"),
+            site_ad_cost=("site_ad_cost", "sum"),
             keyword_ad_cost=("keyword_ad_cost", "sum"),
             ad_cost=("ad_cost", "sum"),
             ad_balance=("ad_balance", "max"),
@@ -166,7 +186,6 @@ def _build_message() -> dict[str, object]:
             f"盈亏{_money(float(row['profit']))}｜"
             f"支付 {_money(float(row['pay_amount']))}｜"
             f"推广 {_money(float(row['ad_cost']))}｜"
-            f"智能托管 {_money(float(row.get('smart_ad_cost', 0) or 0))}｜"
             f"余额 {_money_optional(row.get('ad_balance'))}"
         )
 
@@ -178,7 +197,6 @@ def _build_message() -> dict[str, object]:
             f"{store_scope}实时盈亏：{_money(float(snapshot['total_profit']))}",
             f"支付金额：{_money(float(snapshot['total_pay']))}",
             f"推广消耗：{_money(float(snapshot['total_ad']))}",
-            f"其中智能托管：{_money(float(snapshot.get('total_smart_ad', 0) or 0))}",
             "",
             "分店结果：",
             *store_lines,
