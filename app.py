@@ -393,8 +393,16 @@ def render_sales_orders_trend(data: pd.DataFrame, height: int = 360) -> None:
         secondary_y=True,
     )
     sales_fig.update_xaxes(title_text="")
-    sales_fig.update_yaxes(title_text="销量", secondary_y=False)
-    sales_fig.update_yaxes(title_text="订单", secondary_y=True, rangemode="tozero")
+    sales_fig.update_yaxes(
+        title_text="销量",
+        secondary_y=False,
+        rangemode="tozero",
+    )
+    sales_fig.update_yaxes(
+        title_text="订单",
+        secondary_y=True,
+        rangemode="tozero",
+    )
     sales_fig.update_layout(
         height=height,
         margin=dict(l=6, r=6, t=8, b=4),
