@@ -1973,17 +1973,29 @@ def filter_playroad_rows_by_campaign(
     include_campaign_id="",
     exclude_campaign_id=""
 ):
-    include_campaign_id = normalize_id(
+    def to_campaign_id_set(value):
+        if isinstance(value, (list, tuple, set)):
+            values = value
+        else:
+            values = str(value or "").split(",")
+
+        return {
+            normalize_id(item)
+            for item in values
+            if normalize_id(item)
+        }
+
+    include_campaign_ids = to_campaign_id_set(
         include_campaign_id
     )
-    exclude_campaign_id = normalize_id(
+    exclude_campaign_ids = to_campaign_id_set(
         exclude_campaign_id
     )
 
     if (
-        not include_campaign_id
+        not include_campaign_ids
         and
-        not exclude_campaign_id
+        not exclude_campaign_ids
     ):
         return rows
 
@@ -1994,26 +2006,301 @@ def filter_playroad_rows_by_campaign(
         )
 
         if (
-            include_campaign_id
+            include_campaign_ids
             and
-            campaign_id
-            !=
-            include_campaign_id
+            campaign_id not in include_campaign_ids
         ):
             continue
 
         if (
-            exclude_campaign_id
+            exclude_campaign_ids
             and
-            campaign_id
-            ==
-            exclude_campaign_id
+            campaign_id in exclude_campaign_ids
         ):
             continue
 
         filtered.append(row)
 
     return filtered
+
+
+def find_smart_campaign_ids_in_data(data):
+    campaign_ids = []
+    seen = set()
+
+    def add_campaign_id(value):
+        campaign_id = normalize_id(
+            value
+        )
+        if (
+            campaign_id
+            and
+            campaign_id not in seen
+        ):
+            seen.add(
+                campaign_id
+            )
+            campaign_ids.append(
+                campaign_id
+            )
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            campaign_id = normalize_id(
+                obj.get("campaignId")
+            )
+            campaign_name = str(
+                obj.get("campaignName", "")
+                or
+                obj.get("name", "")
+                or
+                ""
+            )
+            item_selected_mode = str(
+                obj.get("itemSelectedMode", "")
+                or
+                ""
+            )
+
+            if (
+                campaign_id
+                and
+                (
+                    item_selected_mode == "shop"
+                    or
+                    "全店模式" in campaign_name
+                )
+            ):
+                add_campaign_id(
+                    campaign_id
+                )
+
+            for value in obj.values():
+                if isinstance(value, (dict, list)):
+                    walk(value)
+
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+
+    walk(data)
+
+    return campaign_ids
+
+
+def build_smart_detail_url(
+    url,
+    campaign_id
+):
+    if not url or not campaign_id:
+        return url
+
+    base = str(url).split("#", 1)[0]
+
+    return (
+        f"{base}#!/manage/onesite-detail"
+        "?mx_bizCode=onebpSite"
+        "&bizCode=onebpSite"
+        "&tab="
+        "&effectEqual=15"
+        "&unifyType=last_click_by_effect_time"
+        "&itemSelectedModeList=shop%2Cgroup"
+        f"&campaignId={campaign_id}"
+    )
+
+
+def discover_smart_campaign_ids(
+    page,
+    url,
+    shop_name
+):
+    configured_campaign_id = extract_query_number(
+        url,
+        "campaignId"
+    )
+
+    if configured_campaign_id:
+        return [
+            configured_campaign_id
+        ]
+
+    if not url:
+        return []
+
+    campaign_ids = []
+    seen = set()
+
+    def add_ids(ids):
+        for campaign_id in ids:
+            if campaign_id not in seen:
+                seen.add(
+                    campaign_id
+                )
+                campaign_ids.append(
+                    campaign_id
+                )
+
+    def handler(response):
+        if (
+            "campaign" not in response.url
+            or
+            (
+                "findPage" not in response.url
+                and
+                "findList" not in response.url
+            )
+        ):
+            return
+
+        try:
+            add_ids(
+                find_smart_campaign_ids_in_data(
+                    response.json()
+                )
+            )
+
+        except Exception:
+            pass
+
+    page.on(
+        "response",
+        handler
+    )
+
+    try:
+        page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=PAGE_TIMEOUT
+        )
+
+    except Exception:
+        pass
+
+    page.wait_for_timeout(
+        12000
+    )
+
+    try:
+        page.remove_listener(
+            "response",
+            handler
+        )
+    except Exception:
+        pass
+
+    if campaign_ids:
+        print(
+            f"✅ [{shop_name}] 识别全店智能计划："
+            +
+            "、".join(campaign_ids)
+        )
+    else:
+        print(
+            f"ℹ️ [{shop_name}] 未识别到全店智能计划，本次智能托管按 0 处理"
+        )
+
+    return campaign_ids
+
+
+def combine_playroad_dfs(
+    dfs,
+    source_name
+):
+    valid_dfs = [
+        df
+        for df in dfs
+        if df is not None
+        and
+        not df.empty
+    ]
+
+    if not valid_dfs:
+        return empty_playroad_df(
+            source_name
+        )
+
+    raw_df = pd.concat(
+        valid_dfs,
+        ignore_index=True
+    )
+
+    numeric_cols = [
+        f"{source_name}消耗",
+        f"{source_name}成交金额",
+        f"{source_name}点击",
+        f"{source_name}ROI",
+    ]
+
+    for col in numeric_cols:
+        if col not in raw_df.columns:
+            raw_df[col] = 0
+
+        raw_df[col] = clean_numeric(
+            raw_df[col]
+        )
+
+    if f"{source_name}商品名称" not in raw_df.columns:
+        raw_df[f"{source_name}商品名称"] = ""
+
+    if "campaignId" not in raw_df.columns:
+        raw_df["campaignId"] = ""
+
+    if "campaignName" not in raw_df.columns:
+        raw_df["campaignName"] = ""
+
+    weighted_roi_col = (
+        f"_{source_name}ROI加权值"
+    )
+    raw_df[weighted_roi_col] = (
+        raw_df[f"{source_name}ROI"]
+        *
+        raw_df[f"{source_name}消耗"]
+    )
+
+    agg = (
+        raw_df
+        .groupby(
+            "商品ID",
+            as_index=False
+        )
+        .agg({
+            f"{source_name}消耗":
+                "sum",
+            f"{source_name}成交金额":
+                "sum",
+            f"{source_name}点击":
+                "sum",
+            weighted_roi_col:
+                "sum",
+            f"{source_name}商品名称":
+                "first",
+            "campaignId":
+                "first",
+            "campaignName":
+                "first",
+        })
+    )
+
+    spend = clean_numeric(
+        agg[f"{source_name}消耗"]
+    )
+
+    agg[f"{source_name}ROI"] = np.where(
+        spend > 0,
+        clean_numeric(
+            agg[weighted_roi_col]
+        )
+        /
+        spend,
+        0.0
+    )
+
+    return agg.drop(
+        columns=[
+            weighted_roi_col
+        ]
+    )
 
 
 # ============================================================
@@ -3735,9 +4022,10 @@ def run_shop(
             ""
         ).strip()
 
-        smart_campaign_id = extract_query_number(
+        smart_campaign_ids = discover_smart_campaign_ids(
+            page,
             smart_url,
-            "campaignId"
+            name
         )
 
         site_df = (
@@ -3750,7 +4038,9 @@ def run_shop(
                 "onebpSite",
                 "全站推广",
                 name,
-                exclude_campaign_id=smart_campaign_id
+                exclude_campaign_id=",".join(
+                    smart_campaign_ids
+                )
             )
         )
 
@@ -3758,20 +4048,29 @@ def run_shop(
         # 3. 全店智能 / 智能托管
         # ====================================================
 
-        if (
-            smart_campaign_id
-            and
-            smart_url
-        ):
-            smart_df = (
-                crawl_playroad_optional(
-                    page,
+        if smart_campaign_ids and smart_url:
+            smart_dfs = []
+
+            for smart_campaign_id in smart_campaign_ids:
+                smart_detail_url = build_smart_detail_url(
                     smart_url,
-                    "onebpSite",
-                    "智能托管",
-                    name,
-                    include_campaign_id=smart_campaign_id
+                    smart_campaign_id
                 )
+
+                smart_dfs.append(
+                    crawl_playroad_optional(
+                        page,
+                        smart_detail_url,
+                        "onebpSite",
+                        "智能托管",
+                        name,
+                        include_campaign_id=smart_campaign_id
+                    )
+                )
+
+            smart_df = combine_playroad_dfs(
+                smart_dfs,
+                "智能托管"
             )
         elif (
             smart_url
