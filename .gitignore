@@ -19,6 +19,7 @@ data/
 logs/
 *.log
 .ssh_tmp/
+remote_site_current/
 
 # Real shop/account/cost configuration
 shops.json
