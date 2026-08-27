@@ -1853,7 +1853,7 @@ data_note = (
     else "暂无实时抓取快照；当前以财务日报最新日期展示。"
 )
 st.caption(data_note)
-render_realtime_agent_panel()
+# Dashboard no longer shows local daemon status, last update, or manual trigger.
 
 rank_source = realtime_daily if not realtime_daily.empty else all_daily
 render_realtime_data_section(realtime_daily, all_daily, realtime_generated_at)
