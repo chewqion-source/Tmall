@@ -17,7 +17,7 @@ import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +39,13 @@ TAX_RATE = 0.05
 
 ORDER_LIST_URL = "https://fxg.jinritemai.com/api/order/searchlist"
 AFTERSALE_LIST_URL = "https://fxg.jinritemai.com/after_sale/pc/list"
+PRODUCT_PROMOTION_URL = "https://compass.jinritemai.com/compass_api/shop/product/product/product_list"
+PRODUCT_PROMOTION_INDEXES = (
+    "receive_amt,pay_amt_exclude_refund,trans_amt,pay_amt,pay_cnt,"
+    "ad_costed_amt,ad_cost_ratio,qc_ad_cost,pay_refund_success_amt,"
+    "product_show_ucnt,product_click_ucnt,pay_ucnt,net_trans_amt,"
+    "product_show_pay_converse_uv_rate,pay_combo_cnt,refund_order_cnt"
+)
 
 
 def cents(value: Any) -> float:
@@ -160,7 +167,7 @@ class CdpPage:
             pass
 
 
-def connect_cdp(port: int) -> CdpPage:
+def connect_cdp(port: int, url_contains: str | None = None) -> CdpPage:
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=5) as resp:
         tabs = json.loads(resp.read().decode("utf-8"))
 
@@ -170,6 +177,7 @@ def connect_cdp(port: int) -> CdpPage:
         if tab.get("type") == "page"
         and "jinritemai.com" in text(tab.get("url"))
         and "devtools" not in text(tab.get("url")).lower()
+        and (not url_contains or url_contains in text(tab.get("url")))
     ]
     if not candidates:
         raise RuntimeError(f"端口 {port} 没有找到已登录的抖店页面")
@@ -304,6 +312,80 @@ def fetch_success_refunds(page: CdpPage, day: str, page_size: int = 50, max_page
         if len(items) < page_size:
             break
     return rows
+
+
+def metric_value(cell_info: dict[str, Any], metric: str) -> float:
+    node = cell_info.get(metric) or {}
+    node = node.get(f"{metric}_index_values") or {}
+    index_values = node.get("index_values") or {}
+    value = index_values.get("value") or {}
+    return cents(value.get("value"))
+
+
+def product_info_value(cell_info: dict[str, Any], key: str) -> str:
+    info = cell_info.get("product_info") or {}
+    node = info.get(key) or {}
+    value = node.get("value") or {}
+    return text(value.get("value_str"))
+
+
+def fetch_product_promotions(
+    page: CdpPage,
+    promotion_day: str,
+    page_size: int = 10,
+    max_pages: int = 20,
+) -> pd.DataFrame:
+    rows = []
+    day_text = datetime.strptime(promotion_day, "%Y-%m-%d").strftime("%Y/%m/%d")
+    for page_no in range(1, max_pages + 1):
+        params = {
+            "date_type": "20",
+            "begin_date": f"{day_text} 00:00:00",
+            "end_date": f"{day_text} 00:00:00",
+            "is_activity": "false",
+            "activity_id": "",
+            "key_word": "",
+            "index_selected": PRODUCT_PROMOTION_INDEXES,
+            "sale_type": "1",
+            "content_type": "1",
+            "cate_ids": "",
+            "cate_ids_original": "0",
+            "product_tab": "0",
+            "only_abnormal": "false",
+            "only_drop_gmv": "false",
+            "only_drop_product_show": "false",
+            "use_customize_gmv": "false",
+            "use_customize_product_show": "false",
+            "abnormal_threshold_gmv": "0",
+            "abnormal_threshold_product_show": "0",
+            "new_version": "true",
+            "page_no": page_no,
+            "page_size": page_size,
+        }
+        data = browser_fetch_json(page, PRODUCT_PROMOTION_URL, params)
+        if data.get("st") not in (0, "0", None):
+            raise RuntimeError(f"抖店罗盘推广接口失败：{data.get('msg') or data.get('st')}")
+        items = data.get("data") or []
+        for item in items:
+            cell_info = item.get("cell_info") or {}
+            store_ad = metric_value(cell_info, "ad_costed_amt")
+            product_ad = metric_value(cell_info, "qc_ad_cost")
+            rows.append(
+                {
+                    "推广数据日期": promotion_day,
+                    "商品ID": product_info_value(cell_info, "product_id_value"),
+                    "商品名称": product_info_value(cell_info, "product_name_value"),
+                    "罗盘支付金额": metric_value(cell_info, "pay_amt"),
+                    "店铺被投推广消耗": store_ad,
+                    "推商品推广消耗": product_ad,
+                    "推广消耗合计": store_ad + product_ad,
+                }
+            )
+        page_result = data.get("page_result") or {}
+        total = int(page_result.get("total") or 0)
+        if len(rows) >= total or len(items) < page_size:
+            break
+    return pd.DataFrame(rows)
 
 
 def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
@@ -541,7 +623,40 @@ def apply_costs(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def build_profit(orders_df: pd.DataFrame, refunds_df: pd.DataFrame) -> pd.DataFrame:
+def allocate_product_promotions(grouped: pd.DataFrame, promotions_df: pd.DataFrame) -> tuple[pd.DataFrame, float]:
+    grouped = grouped.copy()
+    grouped["推商品推广消耗"] = 0.0
+    grouped["店铺被投推广消耗"] = 0.0
+    grouped["推广数据日期"] = ""
+
+    if promotions_df.empty:
+        grouped["总推广消耗"] = 0.0
+        return grouped, 0.0
+
+    promotions = promotions_df.copy()
+    for col in ["店铺被投推广消耗", "推商品推广消耗"]:
+        promotions[col] = pd.to_numeric(promotions[col], errors="coerce").fillna(0.0)
+
+    store_ad_total = float(promotions["店铺被投推广消耗"].sum())
+    product_ad_map = promotions.groupby("商品ID", as_index=True)["推商品推广消耗"].sum().to_dict()
+    promo_day_map = promotions.drop_duplicates("商品ID").set_index("商品ID")["推广数据日期"].to_dict()
+    product_pay_sum = grouped.groupby("商品ID")["支付金额"].transform("sum").replace(0, pd.NA)
+    product_ad_total = grouped["商品ID"].map(product_ad_map).fillna(0.0)
+    grouped["推商品推广消耗"] = (
+        product_ad_total
+        * grouped["支付金额"]
+        / product_pay_sum
+    ).fillna(0.0)
+    grouped["推广数据日期"] = grouped["商品ID"].map(promo_day_map).fillna("")
+    grouped["总推广消耗"] = grouped["推商品推广消耗"]
+    return grouped, store_ad_total
+
+
+def build_profit(
+    orders_df: pd.DataFrame,
+    refunds_df: pd.DataFrame,
+    promotions_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     if orders_df.empty:
         return pd.DataFrame()
 
@@ -558,11 +673,14 @@ def build_profit(orders_df: pd.DataFrame, refunds_df: pd.DataFrame) -> pd.DataFr
 
     grouped["退款金额"] = pd.to_numeric(grouped["退款金额"], errors="coerce").fillna(0.0)
     grouped = apply_costs(grouped)
+    grouped, store_ad_total = allocate_product_promotions(
+        grouped,
+        promotions_df if promotions_df is not None else pd.DataFrame(),
+    )
     grouped["平台扣点"] = PLATFORM_RATE
     grouped["税点"] = TAX_RATE
     grouped["平台费用"] = grouped["支付金额"] * PLATFORM_RATE
     grouped["税费"] = grouped["支付金额"] * TAX_RATE
-    grouped["总推广消耗"] = 0.0
     grouped["实时盈亏"] = (
         grouped["支付金额"]
         - grouped["退款金额"]
@@ -576,10 +694,13 @@ def build_profit(orders_df: pd.DataFrame, refunds_df: pd.DataFrame) -> pd.DataFr
         lambda row: row["实时盈亏"] / row["支付金额"] if row["支付金额"] else 0.0,
         axis=1,
     )
+    grouped.attrs["store_ad_cost"] = store_ad_total
+    grouped.attrs["overall_profit"] = float(grouped["实时盈亏"].sum()) - store_ad_total
+    grouped.attrs["product_ad_cost"] = float(grouped["推商品推广消耗"].sum())
     return grouped.sort_values("实时盈亏", ascending=False)
 
 
-def save_outputs(df: pd.DataFrame, refunds_df: pd.DataFrame, day: str) -> None:
+def save_outputs(df: pd.DataFrame, refunds_df: pd.DataFrame, promotions_df: pd.DataFrame, day: str) -> None:
     SHOP_DIR.mkdir(parents=True, exist_ok=True)
     money_cols = [
         "支付金额",
@@ -591,6 +712,8 @@ def save_outputs(df: pd.DataFrame, refunds_df: pd.DataFrame, day: str) -> None:
         "平台费用",
         "税费",
         "总推广消耗",
+        "推商品推广消耗",
+        "店铺被投推广消耗",
         "实时盈亏",
     ]
     df = df.copy()
@@ -610,25 +733,55 @@ def save_outputs(df: pd.DataFrame, refunds_df: pd.DataFrame, day: str) -> None:
         index=False,
         encoding="utf-8-sig",
     )
+    promotions_df.to_csv(
+        SHOP_DIR / f"douyin_promotion_{day.replace('-', '')}.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    summary = {
+        "store": SHOP_NAME,
+        "order_day": day,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "rows": int(len(df)),
+        "pay_amount": round(float(df["支付金额"].sum()) if not df.empty else 0.0, 2),
+        "refund_amount": round(float(df["退款金额"].sum()) if not df.empty else 0.0, 2),
+        "product_ad_cost": round(float(df.attrs.get("product_ad_cost", 0.0)), 2),
+        "store_ad_cost": round(float(df.attrs.get("store_ad_cost", 0.0)), 2),
+        "row_profit": round(float(df["实时盈亏"].sum()) if not df.empty else 0.0, 2),
+        "overall_profit": round(float(df.attrs.get("overall_profit", 0.0)), 2),
+        "promotion_rows": int(len(promotions_df)),
+        "promotion_day": text(promotions_df["推广数据日期"].iloc[0]) if not promotions_df.empty else "",
+    }
+    (SHOP_DIR / "latest_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
-def run(port: int = DEFAULT_PORT, day: str | None = None) -> pd.DataFrame:
+def run(port: int = DEFAULT_PORT, day: str | None = None, promotion_day: str | None = None) -> pd.DataFrame:
     day = day or datetime.now().strftime("%Y-%m-%d")
-    page = connect_cdp(port)
+    page = connect_cdp(port, "fxg.jinritemai.com")
     try:
         orders = fetch_orders(page, day)
         refunds = fetch_success_refunds(page, day)
     finally:
         page.close()
 
+    promotion_day = promotion_day or (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    promo_page = connect_cdp(port, "compass.jinritemai.com/shop/commodity/product-list")
+    try:
+        promotions_df = fetch_product_promotions(promo_page, promotion_day)
+    finally:
+        promo_page.close()
+
     orders_df = parse_orders(orders)
     added, updated, unique_count = ensure_sku_cost_workbook(orders_df, day)
     refunds_df = parse_refunds(refunds)
-    result = build_profit(orders_df, refunds_df)
+    result = build_profit(orders_df, refunds_df, promotions_df)
     result.attrs["sku_cost_added"] = added
     result.attrs["sku_cost_updated"] = updated
     result.attrs["sku_cost_unique"] = unique_count
-    save_outputs(result, refunds_df, day)
+    save_outputs(result, refunds_df, promotions_df, day)
     return result
 
 
@@ -636,19 +789,26 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--day", default=datetime.now().strftime("%Y-%m-%d"))
+    parser.add_argument("--promotion-day", default=(datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"))
     args = parser.parse_args()
 
-    result = run(port=args.port, day=args.day)
+    result = run(port=args.port, day=args.day, promotion_day=args.promotion_day)
     total_profit = result["实时盈亏"].sum() if not result.empty else 0.0
     total_pay = result["支付金额"].sum() if not result.empty else 0.0
     total_refund = result["退款金额"].sum() if not result.empty else 0.0
+    product_ad = float(result.attrs.get("product_ad_cost", 0.0))
+    store_ad = float(result.attrs.get("store_ad_cost", 0.0))
+    overall_profit = float(result.attrs.get("overall_profit", total_profit))
     print(f"{SHOP_NAME} 抖店 SKU 实时盈亏完成")
     print(f"商品/SKU行数：{len(result)}")
     print(f"成本表新增SKU：{result.attrs.get('sku_cost_added', 0)}")
     print(f"成本表已有SKU：{result.attrs.get('sku_cost_updated', 0)}")
     print(f"支付金额：¥{total_pay:.2f}")
     print(f"当日退款成功：¥{total_refund:.2f}")
-    print(f"实时盈亏：¥{total_profit:.2f}")
+    print(f"推商品推广消耗：¥{product_ad:.2f}")
+    print(f"店铺被投推广消耗：¥{store_ad:.2f}")
+    print(f"商品行盈亏：¥{total_profit:.2f}")
+    print(f"店铺整体盈亏：¥{overall_profit:.2f}")
     print(f"文件：{SHOP_DIR / 'latest.csv'}")
     return 0
 
