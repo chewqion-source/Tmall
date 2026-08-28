@@ -1,10 +1,45 @@
 .venv/
 __pycache__/
 *.pyc
+*.py[cod]
+*.pyo
+*.pyd
 *.log
 .streamlit/
 .deploy/
 .cache/
 dist/
+
+# Local browser login/session data
+browser_profile/
+chrome_profile/
+chrome_debug_profile/
+chrome_profiles/
+
+# Runtime outputs and diagnostics
 data/*
 !data/.gitkeep
+logs/
+.ssh_tmp/
+remote_site_current/
+
+# Real shop/account/cost configuration
+shops.json
+config.json
+config/feishu_webhook.json
+config/sku_cost.xlsx
+config/backups/
+cost_config.csv
+cost_config/*.csv
+
+# Keep example/config directories visible
+!config/.gitkeep
+!cost_config/.gitkeep
+!shops.example.json
+!config.example.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
