@@ -88,7 +88,12 @@ def load_shops() -> list[dict[str, object]]:
     for raw in payload.get("shops", []):
         if not raw.get("enabled", True):
             continue
-        if str(raw.get("platform", "")).strip().lower() == "douyin":
+        platform = str(raw.get("platform", "")).strip().lower()
+
+        if platform == "douyin":
+            continue
+
+        if platform == "xiaohongshu":
             continue
         port = int(raw.get("port", 0))
         if not port:

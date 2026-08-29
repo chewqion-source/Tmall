@@ -59,6 +59,9 @@ SHOPS_FILE = BASE_DIR / "shops.json"
 
 GUOHUO_SHOP_NAME = "国货严选"
 GUOHUO_MARKETING_ESTIMATE_RATE = 0.20
+STORE_PLATFORM_RATE_OVERRIDES = {
+    "坐拥_宁静": 0.006,
+}
 
 SKU_SCRIPT = BASE_DIR / "order_sku_crawler_v2_5_4.py"
 PROFIT_SCRIPT = BASE_DIR / "qianniu_profit_crawler.py"
@@ -66,6 +69,8 @@ REFUND_SCRIPT = BASE_DIR / "refund_crawler_v3_6_2.py"
 GUOHUO_SCRIPT = BASE_DIR / "guohuo_yanxuan_crawler.py"
 DOUYIN_SHOP_NAME = "盲盒抖店"
 DOUYIN_SCRIPT = BASE_DIR / "douyin_profit_crawler.py"
+XIAOHONGSHU_SHOP_NAME = "盲盒千帆"
+XIAOHONGSHU_SCRIPT = BASE_DIR / "xiaohongshu_profit_crawler.py"
 
 
 # ============================================================
@@ -208,6 +213,14 @@ def is_douyin_shop(shop):
     )
 
 
+def is_xiaohongshu_shop(shop):
+    return (
+        str(shop.get("platform", "")).strip().lower() == "xiaohongshu"
+        or
+        str(shop.get("name", "")).strip() == XIAOHONGSHU_SHOP_NAME
+    )
+
+
 def load_qianniu_refund_shops():
     return [
         shop
@@ -215,6 +228,8 @@ def load_qianniu_refund_shops():
         if not is_guohuo_shop(shop.get("name"))
         and
         not is_douyin_shop(shop)
+        and
+        not is_xiaohongshu_shop(shop)
     ]
 
 
@@ -227,6 +242,13 @@ def shop_port(shop):
         return int(shop.get("port"))
     except Exception:
         return 0
+
+
+def platform_rate_for_shop(name):
+    return STORE_PLATFORM_RATE_OVERRIDES.get(
+        str(name or "").strip(),
+        None,
+    )
 
 
 def with_only_shop(name, func):
@@ -489,12 +511,18 @@ def run_refund_crawler():
 
     main_func = module.main
 
-    if asyncio.iscoroutinefunction(main_func):
-        output = asyncio.run(
-            main_func()
-        )
-    else:
-        output = main_func()
+    try:
+        if asyncio.iscoroutinefunction(main_func):
+            output = asyncio.run(
+                main_func()
+            )
+        else:
+            output = main_func()
+    except Exception as exc:
+        print()
+        print(f"⚠ 退款抓取器末尾异常，尝试使用已落盘退款文件继续：{exc}")
+        print(traceback.format_exc())
+        output = {}
 
     output = output or {}
     results = output.get("results", [])
@@ -508,6 +536,29 @@ def run_refund_crawler():
         for item in results
         if str(item.get("shop", "")).strip()
     }
+
+    day = datetime.now().strftime("%Y%m%d")
+    for shop in load_qianniu_refund_shops():
+        name = shop_name(shop)
+        if not name or name in current_results:
+            continue
+        summary_file = DATA_ROOT / safe_filename(name) / f"refund_summary_{day}.csv"
+        if not summary_file.exists():
+            continue
+        if REFUND_RUN_STARTED_AT and summary_file.stat().st_mtime < REFUND_RUN_STARTED_AT:
+            continue
+        try:
+            summary_df = pd.read_csv(summary_file, encoding="utf-8-sig")
+            amount_col = "退款金额" if "退款金额" in summary_df.columns else None
+            amount = float(clean_numeric(summary_df[amount_col]).sum()) if amount_col else 0.0
+            current_results[name] = {
+                "amount": amount,
+                "rows": int(len(summary_df)),
+            }
+            print(f"   ↳ 已从退款文件恢复 {name}：{len(summary_df)} 单 / ¥{amount:.2f}")
+        except Exception as file_exc:
+            print(f"   ⚠ 读取退款文件失败 {name}：{file_exc}")
+
     REFUND_RESULT_MAP.update(current_results)
 
     print()
@@ -610,13 +661,70 @@ def run_douyin_crawler():
     print("✓ 盲盒抖店抓取阶段执行完成")
 
 
-def integrate_douyin_shop(shop):
-    shop_dir = DATA_ROOT / safe_filename(DOUYIN_SHOP_NAME)
+def run_xiaohongshu_crawler():
+    print()
+    print("=" * 76)
+    print("阶段 3.7 / 4：抓取盲盒千帆订单 + 当日退款成功 + 千帆推广消耗")
+    print("=" * 76)
+
+    if not XIAOHONGSHU_SCRIPT.exists():
+        raise RuntimeError(
+            f"找不到小红书抓取器：{XIAOHONGSHU_SCRIPT}"
+        )
+
+    xhs_shops = [
+        shop
+        for shop in load_enabled_shops()
+        if is_xiaohongshu_shop(shop)
+    ]
+
+    if not xhs_shops:
+        print("ℹ️ 未启用小红书店铺，跳过")
+        return
+
+    success = 0
+    for shop in xhs_shops:
+        name = shop_name(shop)
+        port = int(shop.get("port") or 9227)
+        command = [
+            sys.executable,
+            str(XIAOHONGSHU_SCRIPT),
+            "--port",
+            str(port),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                cwd=str(BASE_DIR),
+                timeout=480,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"{name} 小红书抓取超过 8 分钟，已强制跳过") from exc
+        if result.returncode != 0:
+            raise RuntimeError(f"{name} 抓取未成功，退出码 {result.returncode}")
+
+        latest_file = DATA_ROOT / safe_filename(name) / "latest.csv"
+        if not latest_file.exists():
+            fallback_file = DATA_ROOT / safe_filename(XIAOHONGSHU_SHOP_NAME) / "latest.csv"
+            if fallback_file.exists() and fallback_file != latest_file:
+                latest_file.parent.mkdir(parents=True, exist_ok=True)
+                latest_file.write_bytes(fallback_file.read_bytes())
+            else:
+                raise RuntimeError(f"{name} 抓取未生成 latest.csv")
+        SKU_SUCCESS_SHOPS.add(name)
+        success += 1
+
+    print(f"✓ 小红书店铺抓取阶段执行完成：{success} 家")
+
+
+def integrate_external_platform_shop(shop, default_shop_name, platform_label):
+    shop_display_name = shop_name(shop) or default_shop_name
+    shop_dir = DATA_ROOT / safe_filename(shop_display_name)
     latest_file = shop_dir / "latest.csv"
     summary_file = shop_dir / "latest_summary.json"
 
     if not latest_file.exists():
-        print(f"⚠ [{DOUYIN_SHOP_NAME}] 没有 latest.csv，跳过")
+        print(f"⚠ [{shop_display_name}] 没有 latest.csv，跳过")
         return None
 
     df = pd.read_csv(
@@ -627,22 +735,26 @@ def integrate_douyin_shop(shop):
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     store_ad_cost = 0.0
+    ad_balance = None
     overall_profit = None
     if summary_file.exists():
         try:
             summary = json.loads(summary_file.read_text(encoding="utf-8"))
             generated_at = str(summary.get("generated_at") or generated_at)
             store_ad_cost = float(summary.get("store_ad_cost", 0) or 0)
+            if summary.get("ad_balance") is not None:
+                ad_balance = float(summary.get("ad_balance") or 0)
             overall_profit = float(summary.get("overall_profit", 0) or 0)
         except Exception:
             pass
 
-    df["店铺"] = DOUYIN_SHOP_NAME
+    df["店铺"] = shop_display_name
     df["抓取时间"] = generated_at
     df["商品货号"] = df.get("商家编码", "")
     df["支付件数"] = clean_numeric(df.get("SKU成交件数", 0))
     df["店铺级推广消耗"] = store_ad_cost
     df["店铺整体盈亏"] = overall_profit if overall_profit is not None else clean_numeric(df.get("实时盈亏", 0)).sum() - store_ad_cost
+    df["账户推广余额"] = ad_balance
 
     if "成本匹配状态" in df.columns:
         df["SKU成本状态"] = np.where(
@@ -653,7 +765,7 @@ def integrate_douyin_shop(shop):
     else:
         df["SKU成本状态"] = "无SKU订单成本"
 
-    df["SKU成本来源"] = "抖店订单SKU成本"
+    df["SKU成本来源"] = f"{platform_label}订单SKU成本"
     df["SKU成本未匹配行数"] = np.where(
         df["SKU成本状态"].eq("完整"),
         0,
@@ -675,7 +787,37 @@ def integrate_douyin_shop(shop):
         "盈利",
         np.where(clean_numeric(df.get("实时盈亏", 0)) < 0, "亏损", "持平")
     )
+
+    print()
+    print(f"✅ {shop_display_name} 成本整合完成")
+    print(f"   支付金额：¥{clean_numeric(df.get('支付金额', 0)).sum():.2f}")
+    print(f"   推广消耗：¥{clean_numeric(df.get('总推广消耗', 0)).sum() + store_ad_cost:.2f}")
+    store_profit = (
+        float(df["店铺整体盈亏"].iloc[0])
+        if not df.empty and "店铺整体盈亏" in df.columns
+        else float(overall_profit or 0)
+    )
+    print(f"   实时盈亏：¥{store_profit:.2f}")
+    if ad_balance is not None:
+        print(f"   账户推广余额：¥{ad_balance:.2f}")
+    print(f"   最新数据：{latest_file}")
     return df
+
+
+def integrate_douyin_shop(shop):
+    return integrate_external_platform_shop(
+        shop,
+        DOUYIN_SHOP_NAME,
+        "抖店",
+    )
+
+
+def integrate_xiaohongshu_shop(shop):
+    return integrate_external_platform_shop(
+        shop,
+        XIAOHONGSHU_SHOP_NAME,
+        "小红书",
+    )
 
 
 def load_shop_refund_total(shop):
@@ -1004,9 +1146,25 @@ def integrate_shop(
 
         return None
 
-    # V5.1：只有本轮 SKU 抓取成功的店铺，才允许使用 SKU 成本汇总。
-    # 避免本轮 SKU 抓取失败却继续读取同一天旧的 product_cost_summary。
-    if shop["name"] in SKU_SUCCESS_SHOPS:
+    cost_file = (
+        shop_dir
+        /
+        f"product_cost_summary_{datetime.now().strftime('%Y%m%d')}.csv"
+    )
+
+    use_sku_summary = (
+        shop["name"] in SKU_SUCCESS_SHOPS
+        or
+        (
+            cost_file.exists()
+            and
+            cost_file.stat().st_size > 0
+        )
+    )
+
+    # 优先使用本轮 SKU 汇总；如果是补救整合/补发上传，允许使用当天已生成的汇总。
+    # 仍然不读取跨日期历史文件，避免旧成本误扣到今天。
+    if use_sku_summary:
         cost_df, cost_file = (
             load_product_cost_summary(
                 shop
@@ -1014,11 +1172,6 @@ def integrate_shop(
         )
     else:
         cost_df = None
-        cost_file = (
-            shop_dir
-            /
-            f"product_cost_summary_{datetime.now().strftime('%Y%m%d')}.csv"
-        )
 
     df = pd.read_csv(
         latest_file,
@@ -1189,6 +1342,14 @@ def integrate_shop(
         df[col] = clean_numeric(
             df[col]
         )
+
+    override_platform_rate = platform_rate_for_shop(
+        shop.get("name")
+    )
+    if override_platform_rate is not None:
+        df[
+            "平台扣点"
+        ] = override_platform_rate
 
     # 使用订单 SKU 已识别到的单件货成本和快递成本。
     # 即使存在未匹配 SKU，也先计入已知成本，同时保留未匹配行数提示。
@@ -1939,6 +2100,7 @@ def write_realtime_snapshot(df):
         "generated_at": generated_at,
         "previous_generated_at": previous_payload.get("generated_at", ""),
         "previous_records": previous_payload.get("records", []),
+        "previous_store_adjustments": previous_payload.get("store_adjustments", []),
         "source": Path(__file__).name,
         "store_adjustments": list(store_adjustments.values()),
         "records": records,
@@ -2068,6 +2230,10 @@ def integrate_all_shops():
         try:
             if is_douyin_shop(shop):
                 df = integrate_douyin_shop(
+                    shop
+                )
+            elif is_xiaohongshu_shop(shop):
+                df = integrate_xiaohongshu_shop(
                     shop
                 )
             else:
@@ -2224,6 +2390,8 @@ def run_single_shop_pipeline(shop):
         def _run():
             if is_douyin_shop(shop):
                 run_douyin_crawler()
+            elif is_xiaohongshu_shop(shop):
+                run_xiaohongshu_crawler()
             elif is_guohuo_shop(name):
                 run_guohuo_yanxuan_crawler()
             else:
@@ -2305,6 +2473,78 @@ def run_hybrid_shop_pipelines():
     else:
         print("ℹ️ 未启用抖店，跳过")
 
+    # 小红书千帆：使用已登录端口，抓取实时订单/退款/推广。
+    xhs_shops = [
+        shop
+        for shop in load_enabled_shops()
+        if is_xiaohongshu_shop(shop)
+    ]
+    if xhs_shops:
+        try:
+            run_xiaohongshu_crawler()
+        except Exception as exc:
+            print()
+            print(f"✗ 小红书店铺抓取失败，跳过本轮小红书数据：{exc}")
+            print(traceback.format_exc())
+    else:
+        print("ℹ️ 未启用小红书店铺，跳过")
+
+
+def sync_outputs_to_server():
+    if os.environ.get("TMALL_SKIP_AUTO_SYNC", "").strip().lower() in {"1", "true", "yes", "on"}:
+        print("ℹ️ 已按环境变量跳过自动同步服务器")
+        return
+
+    sync_steps = [
+        (
+            "SKU成本维护表",
+            [
+                sys.executable,
+                str(BASE_DIR / "sync_sku_cost.py"),
+                "push",
+            ],
+        ),
+        (
+            "网站实时快照",
+            [
+                sys.executable,
+                str(BASE_DIR / "upload_realtime_snapshot.py"),
+            ],
+        ),
+    ]
+
+    print()
+    print("=" * 76)
+    print("自动同步服务器")
+    print("=" * 76)
+
+    for label, command in sync_steps:
+        print(f"同步{label}...")
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(BASE_DIR),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=240,
+            )
+        except Exception as exc:
+            print(f"⚠ {label}同步失败：{exc}")
+            continue
+
+        output = (completed.stdout or "").strip()
+        error = (completed.stderr or "").strip()
+        if output:
+            print(output)
+        if error:
+            print(error)
+        if completed.returncode != 0:
+            print(f"⚠ {label}同步失败，退出码：{completed.returncode}")
+        else:
+            print(f"✓ {label}同步完成")
+
 
 def main():
     print()
@@ -2321,6 +2561,7 @@ def main():
 
     # 4. SKU成本 + 退款覆盖 / 重算
     integrate_all_shops()
+    sync_outputs_to_server()
 
     print()
     print("=" * 76)
@@ -2329,7 +2570,7 @@ def main():
 
     print()
     print(
-        "当前实时盈亏已扣：SKU货品成本、订单快递费、平台费用、税费、推广费、当天退款成功金额；国货严选额外按支付金额20%预估营销托管费用；盲盒抖店的店铺被投推广按店铺级扣减，推商品推广按商品/SKU扣减。"
+        "当前实时盈亏已扣：SKU货品成本、订单快递费、平台费用、税费、推广费、当天退款成功金额；国货严选额外按支付金额20%预估营销托管费用；抖店/小红书的店铺被投推广按店铺级扣减，推商品推广按商品/SKU扣减。"
     )
 
 

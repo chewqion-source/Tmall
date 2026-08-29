@@ -103,7 +103,12 @@ def load_shops():
             print("ℹ️ 国货严选使用淘工厂专用适配器，跳过千牛退款抓取")
             continue
 
-        if str(x.get("platform", "")).strip().lower() == "douyin":
+        platform = str(x.get("platform", "")).strip().lower()
+
+        if platform == "douyin":
+            continue
+
+        if platform == "xiaohongshu":
             continue
 
         if only_shop and name != only_shop:
@@ -2924,6 +2929,10 @@ async def crawl_shop(
         "%Y%m%d"
     )
 
+    run_stamp = datetime.now().strftime(
+        "%Y%m%d_%H%M%S"
+    )
+
     detail_path = (
         data_dir
         /
@@ -2934,6 +2943,18 @@ async def crawl_shop(
         data_dir
         /
         f"refund_summary_{day}.csv"
+    )
+
+    detail_stamp_path = (
+        data_dir
+        /
+        f"refund_detail_{run_stamp}.csv"
+    )
+
+    summary_stamp_path = (
+        data_dir
+        /
+        f"refund_summary_{run_stamp}.csv"
     )
 
     raw_path = (
@@ -3337,6 +3358,10 @@ async def crawl_shop(
                 out
             )
 
+    detail_stamp_path.write_bytes(
+        detail_path.read_bytes()
+    )
+
     summary = {}
 
     for row in all_rows:
@@ -3392,8 +3417,12 @@ async def crawl_shop(
                     round(
                         amount,
                         2
-                    ),
+                ),
             })
+
+    summary_stamp_path.write_bytes(
+        summary_path.read_bytes()
+    )
 
     total = sum(
         row[

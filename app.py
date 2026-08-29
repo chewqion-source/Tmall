@@ -491,9 +491,9 @@ def _weighted_roi(rows: pd.DataFrame, roi_column: str = "promotion_roi") -> floa
 
 def _hour_delta(current: float, previous: float | None, suffix: str = "") -> str:
     if previous is None:
-        return "小时环比 --"
+        return "--"
     delta = _metric_delta(float(current), float(previous))
-    return f"小时环比 {delta}{suffix}"
+    return f"{delta}{suffix}"
 
 
 def _aggregate_period(data: pd.DataFrame, start_date: pd.Timestamp, end_date: pd.Timestamp) -> dict[str, float]:
@@ -721,6 +721,50 @@ def render_realtime_agent_panel() -> None:
 
 
 def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.DataFrame, str | None]:
+    def apply_store_adjustments(data: pd.DataFrame, adjustments: list[dict[str, object]]) -> pd.DataFrame:
+        if data.empty or not adjustments:
+            return data
+
+        rows = []
+        latest_date = data["date"].max()
+        for adjustment in adjustments:
+            store = str(adjustment.get("store", "")).strip()
+            amount = pd.to_numeric(adjustment.get("store_level_ad_cost", 0), errors="coerce")
+            if not store or pd.isna(amount) or float(amount) <= 0:
+                continue
+            rows.append(
+                {
+                    "store": store,
+                    "date": latest_date,
+                    "product_id": "__store_adjustment__",
+                    "product_name": "店铺级推广扣减",
+                    "sales_qty": 0.0,
+                    "order_count": 0.0,
+                    "profit": -float(amount),
+                    "pay_amount": 0.0,
+                    "ad_cost": float(amount),
+                    "site_ad_cost": 0.0,
+                    "keyword_ad_cost": 0.0,
+                    "refund_amount": 0.0,
+                    "sku_count": 0.0,
+                    "promotion_roi": 0.0,
+                    "site_promotion_roi": 0.0,
+                    "keyword_promotion_roi": 0.0,
+                    "current_roi": 0.0,
+                    "break_even_roi": 0.0,
+                    "merch_cost": 0.0,
+                    "freight_cost": 0.0,
+                    "platform_fee": 0.0,
+                    "tax_fee": 0.0,
+                    "estimated_marketing_cost": 0.0,
+                    "is_store_adjustment": True,
+                }
+            )
+
+        if not rows:
+            return data
+        return pd.concat([data, pd.DataFrame(rows)], ignore_index=True)
+
     if not path.exists():
         return pd.DataFrame(), None
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -762,7 +806,11 @@ def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.Data
         data["product_name"] = ""
     if "sku_count" not in data.columns:
         data["sku_count"] = 0
+    if "is_store_adjustment" not in data.columns:
+        data["is_store_adjustment"] = False
+    data["is_store_adjustment"] = data["is_store_adjustment"].fillna(False).astype(bool)
     data = data.dropna(subset=["date"])
+    data = apply_store_adjustments(data, payload.get("store_adjustments", []))
     previous_records = payload.get("previous_records", [])
     previous = pd.DataFrame(previous_records)
     if not previous.empty and required.issubset(previous.columns):
@@ -772,7 +820,11 @@ def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.Data
                 previous[column] = 0
             previous[column] = pd.to_numeric(previous[column], errors="coerce").fillna(0)
         previous["product_id"] = previous["product_id"].astype(str)
+        if "is_store_adjustment" not in previous.columns:
+            previous["is_store_adjustment"] = False
+        previous["is_store_adjustment"] = previous["is_store_adjustment"].fillna(False).astype(bool)
         previous = previous.dropna(subset=["date"])
+        previous = apply_store_adjustments(previous, payload.get("previous_store_adjustments", []))
     else:
         previous = pd.DataFrame()
     data.attrs["previous"] = previous
@@ -1500,6 +1552,8 @@ def _render_store_profit_chart(latest_overview: pd.DataFrame) -> None:
 
 def _build_product_rank_rows(product_daily: pd.DataFrame) -> pd.DataFrame:
     rank_rows: list[pd.DataFrame] = []
+    if "is_store_adjustment" in product_daily.columns:
+        product_daily = product_daily[~product_daily["is_store_adjustment"]].copy()
     for store in sorted(product_daily["store"].unique()):
         store_products = product_daily[product_daily["store"] == store].copy()
         if store_products.empty:
@@ -1569,8 +1623,12 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
     if latest_rows.empty:
         return
 
+    product_rows = latest_rows.copy()
+    if "is_store_adjustment" in product_rows.columns:
+        product_rows = product_rows[~product_rows["is_store_adjustment"]].copy()
+
     product_daily = (
-        latest_rows.groupby(["store", "product_id"], as_index=False)
+        product_rows.groupby(["store", "product_id"], as_index=False)
         .agg(
             销量=("sales_qty", "sum"),
             订单量=("order_count", "sum"),
@@ -1685,9 +1743,9 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
     )
     roi_rows = []
     for _, row in product_daily.iterrows():
-        rows = latest_rows[
-            (latest_rows["store"] == row["store"])
-            & (latest_rows["product_id"].astype(str) == str(row["product_id"]))
+        rows = product_rows[
+            (product_rows["store"] == row["store"])
+            & (product_rows["product_id"].astype(str) == str(row["product_id"]))
         ]
         roi_rows.append(
             {

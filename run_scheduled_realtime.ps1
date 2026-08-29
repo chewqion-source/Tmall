@@ -15,29 +15,80 @@ $LogFile = Join-Path $LogDir ("realtime_" + (Get-Date -Format "yyyyMMdd") + ".lo
 
 function Write-RunLog {
     param([string]$Message)
-    Add-Content -Path $LogFile -Value $Message
+    Add-Content -Path $LogFile -Value $Message -Encoding UTF8
     Write-Host $Message
+}
+
+function Quote-ProcessArgument {
+    param([string]$Value)
+    return '"' + ($Value -replace '"', '\"') + '"'
 }
 
 function Invoke-PythonStepWithRetry {
     param(
         [string]$Label,
         [string[]]$Arguments,
-        [int]$MaxAttempts = 3
+        [int]$MaxAttempts = 3,
+        [int]$TimeoutSeconds = 0
     )
 
+    $finalCode = 1
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         Write-RunLog "[$Label] attempt $attempt/$MaxAttempts started"
+        $code = 1
+        $safeLabel = ($Label -replace '[^a-zA-Z0-9_-]', '_')
+        $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+        $stdoutFile = Join-Path $LogDir ("{0}_{1}_{2}.out.log" -f $safeLabel, $stamp, $attempt)
+        $stderrFile = Join-Path $LogDir ("{0}_{1}_{2}.err.log" -f $safeLabel, $stamp, $attempt)
         try {
-            & $Python @Arguments 2>&1 | ForEach-Object {
-                Add-Content -Path $LogFile -Value $_
-                Write-Host $_
+            $process = Start-Process `
+                -FilePath $Python `
+                -ArgumentList $Arguments `
+                -WorkingDirectory $BaseDir `
+                -RedirectStandardOutput $stdoutFile `
+                -RedirectStandardError $stderrFile `
+                -NoNewWindow `
+                -PassThru
+
+            if ($TimeoutSeconds -gt 0) {
+                $finished = $process.WaitForExit($TimeoutSeconds * 1000)
+                if (-not $finished) {
+                    Write-RunLog "[$Label] timeout after $TimeoutSeconds seconds; killing process"
+                    try {
+                        Stop-Process -Id $process.Id -Force
+                    }
+                    catch {
+                        try { $process.Kill() } catch {}
+                    }
+                    try { $process.WaitForExit() } catch {}
+                    $code = 124
+                }
+                else {
+                    $process.Refresh()
+                    $code = $process.ExitCode
+                }
             }
-            $code = $LASTEXITCODE
+            else {
+                $process.WaitForExit()
+                $process.Refresh()
+                $code = $process.ExitCode
+            }
+
+            if ($null -eq $code) {
+                $code = 0
+            }
         }
         catch {
             $code = 1
             Write-RunLog "[$Label] attempt $attempt/$MaxAttempts exception: $($_.Exception.Message)"
+        }
+
+        foreach ($stepLog in @($stdoutFile, $stderrFile)) {
+            if (Test-Path $stepLog) {
+                Get-Content -Path $stepLog -Encoding UTF8 | ForEach-Object {
+                    Write-RunLog $_
+                }
+            }
         }
 
         if ($code -eq 0) {
@@ -47,6 +98,7 @@ function Invoke-PythonStepWithRetry {
             return 0
         }
 
+        $finalCode = $code
         Write-RunLog "[$Label] attempt $attempt/$MaxAttempts failed, exit code: $code"
         if ($attempt -lt $MaxAttempts) {
             $delaySeconds = 15 * $attempt
@@ -56,7 +108,7 @@ function Invoke-PythonStepWithRetry {
     }
 
     Write-RunLog "[$Label] failed after $MaxAttempts attempts"
-    return 1
+    return $finalCode
 }
 
 $lockStream = $null
@@ -71,11 +123,7 @@ try {
 
     Write-RunLog "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run started =========="
 
-    & $Python $LoginCheckScript 2>&1 | ForEach-Object {
-        Add-Content -Path $LogFile -Value $_
-        Write-Host $_
-    }
-    $loginCheckCode = $LASTEXITCODE
+    $loginCheckCode = Invoke-PythonStepWithRetry -Label "login check" -Arguments @($LoginCheckScript) -MaxAttempts 1 -TimeoutSeconds 120
     if ($loginCheckCode -eq 20) {
         Write-RunLog "login check blocked this run; crawler paused until login/captcha is resolved"
         Write-RunLog "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run paused =========="
@@ -86,32 +134,35 @@ try {
         exit $loginCheckCode
     }
 
-    $syncPullCode = Invoke-PythonStepWithRetry -Label "sync sku cost pull" -Arguments @($SyncSkuScript, "pull")
+    $syncPullCode = Invoke-PythonStepWithRetry -Label "sync sku cost pull" -Arguments @($SyncSkuScript, "pull") -TimeoutSeconds 180
     if ($syncPullCode -ne 0) {
         Write-RunLog "sync sku cost pull failed after retries"
         exit $syncPullCode
     }
 
-    & $Python $RunScript 2>&1 | Tee-Object -FilePath $LogFile -Append
-    $runCode = $LASTEXITCODE
+    $runCode = Invoke-PythonStepWithRetry -Label "crawler" -Arguments @($RunScript) -MaxAttempts 2 -TimeoutSeconds 1800
     if ($runCode -ne 0) {
         Write-RunLog "crawler failed, exit code: $runCode"
         exit $runCode
     }
 
-    $syncPushCode = Invoke-PythonStepWithRetry -Label "sync sku cost push" -Arguments @($SyncSkuScript, "push")
+    $syncPushCode = Invoke-PythonStepWithRetry -Label "sync sku cost push" -Arguments @($SyncSkuScript, "push") -TimeoutSeconds 180
     if ($syncPushCode -ne 0) {
         Write-RunLog "sync sku cost push failed after retries"
         exit $syncPushCode
     }
 
-    $uploadCode = Invoke-PythonStepWithRetry -Label "upload realtime snapshot" -Arguments @($UploadScript)
+    $uploadCode = Invoke-PythonStepWithRetry -Label "upload realtime snapshot" -Arguments @($UploadScript) -TimeoutSeconds 180
     if ($uploadCode -ne 0) {
         Write-RunLog "upload failed after retries, exit code: $uploadCode"
         exit $uploadCode
     }
 
-    & $Python $FeishuScript 2>&1 | Tee-Object -FilePath $LogFile -Append
+    $feishuCode = Invoke-PythonStepWithRetry -Label "feishu notify" -Arguments @($FeishuScript) -MaxAttempts 1 -TimeoutSeconds 120
+    if ($feishuCode -ne 0) {
+        Write-RunLog "feishu notify failed, exit code: $feishuCode"
+        exit $feishuCode
+    }
 
     Write-RunLog "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run finished =========="
 }

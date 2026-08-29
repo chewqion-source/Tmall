@@ -52,6 +52,8 @@ def _money_optional(value: object) -> str:
         return "-"
     if pd.isna(number):
         return "-"
+    if abs(number) < 0.005:
+        return "-"
     return _money(number)
 
 
@@ -78,6 +80,7 @@ def _snapshot_summary() -> dict[str, object]:
         "ad_balance",
         "sales_qty",
         "order_count",
+        "refund_amount",
     ]
 
     for column in numeric_columns:
@@ -124,7 +127,7 @@ def _snapshot_summary() -> dict[str, object]:
     data.loc[legacy_only, "ad_cost"] = legacy_component_ad_cost[legacy_only]
 
     store_summary = (
-        data.groupby("store", as_index=False)
+        data.groupby("store", as_index=False, sort=False)
         .agg(
             profit=("profit", "sum"),
             pay_amount=("pay_amount", "sum"),
@@ -136,8 +139,8 @@ def _snapshot_summary() -> dict[str, object]:
             ad_balance=("ad_balance", "max"),
             sales_qty=("sales_qty", "sum"),
             order_count=("order_count", "sum"),
+            refund_amount=("refund_amount", "sum"),
         )
-        .sort_values("profit", ascending=False)
     )
 
     adjustments = pd.DataFrame(payload.get("store_adjustments", []))
@@ -176,7 +179,6 @@ def _snapshot_summary() -> dict[str, object]:
                 -
                 store_summary["store_level_ad_cost"]
             )
-            store_summary = store_summary.sort_values("profit", ascending=False)
 
     return {
         "generated_at": payload.get("generated_at", ""),
@@ -184,6 +186,7 @@ def _snapshot_summary() -> dict[str, object]:
         "total_profit": float(store_summary["profit"].sum()),
         "total_pay": float(data["pay_amount"].sum()),
         "total_ad": float(store_summary["ad_cost"].sum()),
+        "total_refund": float(store_summary["refund_amount"].sum()),
         "total_normal_site_ad": float(data["normal_site_ad_cost"].sum()),
         "total_smart_ad": float(data["smart_ad_cost"].sum()),
         "total_keyword_ad": float(data["keyword_ad_cost"].sum()),
@@ -215,26 +218,26 @@ def _build_message() -> dict[str, object]:
     sku = _sku_cost_summary()
 
     stores = snapshot["stores"]
-    store_count = len(stores)
-    store_scope = f"{store_count}店" if store_count else "多店"
     store_lines = []
     for _, row in stores.iterrows():
         store_lines.append(
             f"【{row['store']}】："
-            f"盈亏{_money(float(row['profit']))}｜"
             f"支付 {_money(float(row['pay_amount']))}｜"
             f"推广 {_money(float(row['ad_cost']))}｜"
+            f"退款 {_money(float(row['refund_amount']))}｜"
+            f"盈亏{_money(float(row['profit']))}｜"
             f"余额 {_money_optional(row.get('ad_balance'))}"
         )
 
     text = "\n".join(
         [
-            "天猫实时盈亏抓取完成",
+            "多平台实时盈亏抓取完成",
             f"更新时间：{snapshot['generated_at'] or datetime.now():}",
             f"商品记录：{snapshot['record_count']}",
-            f"{store_scope}实时盈亏：{_money(float(snapshot['total_profit']))}",
             f"支付金额：{_money(float(snapshot['total_pay']))}",
             f"推广消耗：{_money(float(snapshot['total_ad']))}",
+            f"退款金额：{_money(float(snapshot['total_refund']))}",
+            f"实时盈亏：{_money(float(snapshot['total_profit']))}",
             "",
             "分店结果：",
             *store_lines,

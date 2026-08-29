@@ -121,9 +121,17 @@ def load_enabled_shops():
             )
             continue
 
-        if str(item.get("platform", "")).strip().lower() == "douyin":
+        platform = str(item.get("platform", "")).strip().lower()
+
+        if platform == "douyin":
             print(
                 f"ℹ {name} 使用抖店专用适配器，本阶段跳过千牛订单SKU抓取"
+            )
+            continue
+
+        if platform == "xiaohongshu":
+            print(
+                f"ℹ {name} 使用小红书专用适配器，本阶段跳过千牛订单SKU抓取"
             )
             continue
 

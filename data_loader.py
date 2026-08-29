@@ -25,7 +25,7 @@ STORE_FILE_PATTERNS = {
 }
 LEGACY_SUMMARY_PRODUCT_ID = "全店汇总（早期格式）"
 MIN_REPORT_DATE = pd.Timestamp(2026, 7, 1)
-DISK_CACHE_SCHEMA_VERSION = "product-daily-v7"
+DISK_CACHE_SCHEMA_VERSION = "product-daily-v8"
 
 
 @dataclass(frozen=True)
@@ -182,6 +182,14 @@ def _clean_header(value: object) -> str:
     return re.sub(r"\s+", "", str(value or ""))
 
 
+def _column_by_alias(columns: dict[str, int], *aliases: str) -> int | None:
+    for alias in aliases:
+        key = _clean_header(alias)
+        if key in columns:
+            return columns[key]
+    return None
+
+
 def _find_header(rows: list[list[object]]) -> tuple[int, dict[str, int]]:
     required = {"商品ID", "数量", "单品结余"}
     for row_idx, row in enumerate(rows[:20]):
@@ -289,9 +297,9 @@ def _extract_sheet(sheet: SheetData, year: int) -> list[dict[str, object]]:
     )
     profit_col = columns["单品结余"]
     sku_col = columns.get("货号")
-    pay_col = columns.get("支付金额")
-    refund_col = columns.get("成功退款金额")
-    ad_col = columns.get("推广花费", columns.get("推广花"))
+    pay_col = _column_by_alias(columns, "支付金额")
+    refund_col = _column_by_alias(columns, "成功退款金额", "成功退款金额(元)", "总退款金额")
+    ad_col = _column_by_alias(columns, "推广花费", "推广花", "推广费", "投流托管花费", "投流推广花费景花费")
 
     effective_ids: dict[int, str] = {}
     # Explicitly expand only merged product-ID regions. This is the key rule for
@@ -348,9 +356,9 @@ def _extract_legacy_sheet(
     quantity_col = columns["数量"]
     order_col = columns["快递单量"]
     profit_col = columns["结余"]
-    pay_col = columns.get("支付金额")
-    refund_col = columns.get("成功退款金额")
-    ad_col = columns.get("推广花费", columns.get("推广花"))
+    pay_col = _column_by_alias(columns, "支付金额")
+    refund_col = _column_by_alias(columns, "成功退款金额", "成功退款金额(元)", "总退款金额")
+    ad_col = _column_by_alias(columns, "推广花费", "推广花", "推广费", "投流托管花费", "投流推广花费景花费")
     max_needed_col = max(sku_col, quantity_col, order_col, profit_col, pay_col or 0, refund_col or 0, ad_col or 0)
     records: list[dict[str, object]] = []
 

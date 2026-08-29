@@ -115,6 +115,47 @@ def sku_spec_text(items: Any) -> str:
     return "；".join(parts)
 
 
+def first_positive_cents(data: dict[str, Any], keys: list[str]) -> tuple[float, str]:
+    for key in keys:
+        value = cents(data.get(key))
+        if value > 0:
+            return value, key
+    return 0.0, ""
+
+
+def merchant_income_from_item(item: dict[str, Any], qty: float) -> tuple[float, float, float, str]:
+    user_pay = cents(item.get("pay_amount"))
+    direct_income, source = first_positive_cents(
+        item,
+        [
+            "merchant_receive_amount",
+            "merchant_income_amount",
+            "settle_amount",
+            "settlement_amount",
+            "shop_receive_amount",
+            "shop_income_amount",
+            "seller_receive_amount",
+            "seller_income_amount",
+            "estimated_income_amount",
+            "confirm_receipt_amount",
+            "combo_amount",
+        ],
+    )
+
+    combo_amount = cents(item.get("combo_amount"))
+    if combo_amount > 0:
+        combo_total = combo_amount
+        if qty > 1 and combo_amount <= user_pay + 0.01:
+            combo_total = combo_amount * qty
+        if combo_total > direct_income + 0.01:
+            direct_income = combo_total
+            source = "combo_amount"
+
+    income = direct_income if direct_income > 0 else user_pay
+    platform_subsidy = max(income - user_pay, 0.0)
+    return income, user_pay, platform_subsidy, source or "pay_amount"
+
+
 def is_successful_refund(item: dict[str, Any], day: str) -> bool:
     info = item.get("after_sale_info") or {}
     text_part = item.get("text_part") or {}
@@ -712,7 +753,9 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
         pay_time = order.get("pay_time") or order.get("create_time")
         for item in order.get("product_item") or []:
             qty = num(item.get("combo_num"))
-            pay = cents(item.get("pay_amount"))
+            merchant_income, user_pay, platform_subsidy, income_source = (
+                merchant_income_from_item(item, qty)
+            )
             rows.append(
                 {
                     "店铺": SHOP_NAME,
@@ -724,7 +767,10 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
                     "商品名称": text(item.get("product_name")),
                     "商家编码": text(item.get("merchant_sku_code")),
                     "SKU规格": sku_spec_text(item.get("sku_spec")),
-                    "支付金额": pay,
+                    "支付金额": merchant_income,
+                    "用户实付金额": user_pay,
+                    "平台补贴金额": platform_subsidy,
+                    "收入取值口径": income_source,
                     "SKU订单数": 1,
                     "SKU成交件数": qty,
                     "单价": cents(item.get("combo_amount")),
@@ -982,6 +1028,9 @@ def build_profit(
             "SKU规格",
             "商品名称",
             "支付金额",
+            "用户实付金额",
+            "平台补贴金额",
+            "收入取值口径",
             "SKU订单数",
             "SKU成交件数",
             "退款金额",
@@ -1018,7 +1067,16 @@ def build_profit(
     keys = ["商品ID", "商家编码", "SKU规格"]
     grouped = (
         orders_df.groupby(["店铺", *keys, "商品名称"], as_index=False)
-        .agg({"支付金额": "sum", "SKU订单数": "sum", "SKU成交件数": "sum"})
+        .agg(
+            {
+                "支付金额": "sum",
+                "用户实付金额": "sum",
+                "平台补贴金额": "sum",
+                "收入取值口径": "last",
+                "SKU订单数": "sum",
+                "SKU成交件数": "sum",
+            }
+        )
     )
     if not refunds_df.empty:
         refund_grouped = refunds_df.groupby(keys, as_index=False).agg({"退款金额": "sum"})
@@ -1059,6 +1117,8 @@ def save_outputs(df: pd.DataFrame, refunds_df: pd.DataFrame, promotions_df: pd.D
     SHOP_DIR.mkdir(parents=True, exist_ok=True)
     money_cols = [
         "支付金额",
+        "用户实付金额",
+        "平台补贴金额",
         "退款金额",
         "单件货价",
         "快递费",

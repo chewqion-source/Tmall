@@ -56,6 +56,10 @@ PLAYROAD_FINDPAGE_KEYWORD = "findPage.json"
 
 PAGE_SIZE = 40
 
+STORE_PLATFORM_RATE_OVERRIDES = {
+    "坐拥_宁静": 0.006,
+}
+
 
 # ============================================================
 # 通用
@@ -68,6 +72,13 @@ def safe_filename(name):
         "_",
         str(name)
     ).strip()
+
+
+def platform_rate_for_shop(name):
+
+    return STORE_PLATFORM_RATE_OVERRIDES.get(
+        str(name or "").strip()
+    )
 
 
 def save_promotion_debug(shop_name, source_name, payload, page_summaries, agg):
@@ -401,9 +412,17 @@ def load_shops():
             )
             continue
 
-        if str(shop.get("platform", "")).strip().lower() == "douyin":
+        platform = str(shop.get("platform", "")).strip().lower()
+
+        if platform == "douyin":
             print(
                 f"ℹ️ {name} 使用抖店专用适配器，本阶段跳过千牛实时抓取"
+            )
+            continue
+
+        if platform == "xiaohongshu":
+            print(
+                f"ℹ️ {name} 使用小红书专用适配器，本阶段跳过千牛实时抓取"
             )
             continue
 
@@ -3288,6 +3307,14 @@ def load_cost_config(
             0,
             rate_col
         ] = 0.05
+
+    override_platform_rate = platform_rate_for_shop(
+        shop.get("name")
+    )
+    if override_platform_rate is not None:
+        cost_df[
+            "平台扣点"
+        ] = override_platform_rate
 
     # --------------------------------------------------------
     # 每次抓取都会自动把新商品加入成本表
