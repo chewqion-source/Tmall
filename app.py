@@ -203,6 +203,7 @@ def inject_dashboard_styles() -> None:
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 14px;
 }
 .store-profit-card.good {
@@ -256,6 +257,24 @@ def inject_dashboard_styles() -> None:
 .store-profit-meta-value {
     color: #334155;
     font-variant-numeric: tabular-nums;
+}
+.store-profit-reason {
+    flex: 0 0 100%;
+    min-width: 0;
+    border-top: 1px solid #e5e7eb;
+    padding-top: 8px;
+    color: #475569;
+    font-size: 12px;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.store-profit-card.good .store-profit-reason {
+    border-top-color: #bbf7d0;
+}
+.store-profit-card.bad .store-profit-reason {
+    border-top-color: #fecaca;
 }
 .section-title-row {
     display: flex;
@@ -1489,6 +1508,53 @@ def _format_money(value: float) -> str:
     return f"¥{value:,.2f}"
 
 
+def _short_reason_name(value: object, fallback: object = "") -> str:
+    if pd.isna(value):
+        value = ""
+    if pd.isna(fallback):
+        fallback = ""
+    text = str(value or fallback or "").strip()
+    if not text:
+        return "未命名单品"
+    return text if len(text) <= 16 else f"{text[:16]}..."
+
+
+def _store_profit_reason(store_rows: pd.DataFrame, store_profit: float, ad_cost: float, refund_amount: float) -> str:
+    product_rows = store_rows.copy()
+    if "is_store_adjustment" in product_rows.columns:
+        product_rows = product_rows[~product_rows["is_store_adjustment"].fillna(False).astype(bool)].copy()
+
+    if not product_rows.empty and {"product_id", "profit"}.issubset(product_rows.columns):
+        group_cols = ["product_id"]
+        if "product_name" in product_rows.columns:
+            group_cols.append("product_name")
+        product_profit = (
+            product_rows.groupby(group_cols, dropna=False, as_index=False)
+            .agg(profit=("profit", "sum"))
+        )
+        product_profit["profit"] = pd.to_numeric(product_profit["profit"], errors="coerce").fillna(0)
+        if store_profit >= 0:
+            reason_row = product_profit.sort_values("profit", ascending=False).head(1)
+            if not reason_row.empty and float(reason_row.iloc[0]["profit"]) > 0:
+                row = reason_row.iloc[0]
+                name = _short_reason_name(row.get("product_name"), row.get("product_id"))
+                return f"主因：{name} 贡献 {_format_money(float(row['profit']))}"
+        else:
+            reason_row = product_profit.sort_values("profit", ascending=True).head(1)
+            if not reason_row.empty and float(reason_row.iloc[0]["profit"]) < 0:
+                row = reason_row.iloc[0]
+                name = _short_reason_name(row.get("product_name"), row.get("product_id"))
+                return f"主因：{name} 亏损 {_format_money(abs(float(row['profit'])))}"
+
+    if store_profit < 0 and refund_amount > 0:
+        return f"主因：退款 {_format_money(refund_amount)}"
+    if store_profit < 0 and ad_cost > 0:
+        return f"主因：推广消耗 {_format_money(ad_cost)}"
+    if store_profit >= 0:
+        return "主因：成本和推广控制较稳"
+    return "主因：暂无明显单品波动"
+
+
 def _render_realtime_store_profit(latest_rows: pd.DataFrame) -> None:
     if latest_rows.empty or "store" not in latest_rows.columns:
         return
@@ -1527,6 +1593,8 @@ def _render_realtime_store_profit(latest_rows: pd.DataFrame) -> None:
         pay_amount = float(row.get("pay_amount", 0.0) or 0.0)
         ad_cost = float(row.get("ad_cost", 0.0) or 0.0)
         refund_amount = float(row.get("refund_amount", 0.0) or 0.0)
+        current_store_rows = store_rows[store_rows["store"].astype(str).eq(str(row["store"]))].copy()
+        reason = _store_profit_reason(current_store_rows, profit, ad_cost, refund_amount)
         cards.append(
             f"""
 <div class="store-profit-card {escape(tone)}">
@@ -1548,6 +1616,7 @@ def _render_realtime_store_profit(latest_rows: pd.DataFrame) -> None:
             <span class="store-profit-meta-value">{escape(_format_money(refund_amount))}</span>
         </div>
     </div>
+    <div class="store-profit-reason" title="{escape(reason)}">{escape(reason)}</div>
 </div>
 """
         )
