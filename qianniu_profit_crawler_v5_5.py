@@ -847,7 +847,54 @@ def load_shop_refund_total(shop):
             "正常"
         )
 
-    # 本轮失败：明确返回0，不读取当天旧文件，防止重复/历史误扣。
+    day = datetime.now().strftime(
+        "%Y%m%d"
+    )
+    summary_file = (
+        DATA_ROOT
+        /
+        safe_filename(name)
+        /
+        f"refund_summary_{day}.csv"
+    )
+    if summary_file.exists():
+        try:
+            summary_df = pd.read_csv(
+                summary_file,
+                encoding="utf-8-sig"
+            )
+            amount_col = (
+                "退款金额"
+                if "退款金额" in summary_df.columns
+                else
+                None
+            )
+            amount = (
+                float(clean_numeric(summary_df[amount_col]).sum())
+                if amount_col
+                else
+                0.0
+            )
+            rows = int(len(summary_df))
+            REFUND_RESULT_MAP[name] = {
+                "amount": amount,
+                "rows": rows,
+            }
+            return (
+                amount,
+                rows,
+                summary_file,
+                "正常"
+            )
+        except Exception:
+            return (
+                0.0,
+                0,
+                summary_file,
+                "退款汇总读取失败"
+            )
+
+    # 当天文件也不可用时，明确返回0，防止读取历史退款造成重复误扣。
     return (
         0.0,
         0,
