@@ -200,6 +200,60 @@ def inject_dashboard_styles() -> None:
 .metric-chart-gap {
     height: 18px;
 }
+.store-profit-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 10px;
+    margin: 14px 0 22px;
+}
+.store-profit-card {
+    border: 1px solid #dbe3ef;
+    border-left: 4px solid #94a3b8;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 12px 14px;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, .05);
+    min-height: 100px;
+}
+.store-profit-card.good {
+    border-left-color: #16a34a;
+}
+.store-profit-card.bad {
+    border-left-color: #dc2626;
+}
+.store-profit-card.neutral {
+    border-left-color: #64748b;
+}
+.store-profit-name {
+    color: #334155;
+    font-size: 13px;
+    font-weight: 760;
+    margin-bottom: 8px;
+}
+.store-profit-value {
+    color: #0f172a;
+    font-size: 22px;
+    line-height: 1.1;
+    font-weight: 800;
+}
+.store-profit-card.good .store-profit-value {
+    color: #15803d;
+}
+.store-profit-card.bad .store-profit-value {
+    color: #b91c1c;
+}
+.store-profit-meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 10px;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.25;
+}
+.store-profit-meta span {
+    overflow-wrap: anywhere;
+}
 .section-title-row {
     display: flex;
     align-items: center;
@@ -1432,6 +1486,68 @@ def _format_money(value: float) -> str:
     return f"¥{value:,.2f}"
 
 
+def _render_realtime_store_profit(latest_rows: pd.DataFrame) -> None:
+    if latest_rows.empty or "store" not in latest_rows.columns:
+        return
+
+    store_rows = latest_rows[latest_rows["store"].astype(str).str.strip() != ""].copy()
+    if store_rows.empty:
+        return
+
+    agg_map = {
+        "pay_amount": ("pay_amount", "sum"),
+        "ad_cost": ("ad_cost", "sum"),
+        "refund_amount": ("refund_amount", "sum"),
+        "profit": ("profit", "sum"),
+    }
+    available_agg = {
+        label: agg
+        for label, agg in agg_map.items()
+        if agg[0] in store_rows.columns
+    }
+    if "profit" not in available_agg:
+        return
+
+    store_summary = (
+        store_rows.groupby("store", sort=False)
+        .agg(**available_agg)
+        .reset_index()
+        .sort_values("profit", ascending=False)
+    )
+    if store_summary.empty:
+        return
+
+    cards = []
+    for _, row in store_summary.iterrows():
+        profit = float(row.get("profit", 0.0) or 0.0)
+        tone = profit_tone(profit)
+        pay_amount = float(row.get("pay_amount", 0.0) or 0.0)
+        ad_cost = float(row.get("ad_cost", 0.0) or 0.0)
+        refund_amount = float(row.get("refund_amount", 0.0) or 0.0)
+        cards.append(
+            f"""
+<div class="store-profit-card {escape(tone)}">
+    <div class="store-profit-name">{escape(str(row["store"]))}</div>
+    <div class="store-profit-value">{escape(_format_money(profit))}</div>
+    <div class="store-profit-meta">
+        <span>支付 {escape(_format_money(pay_amount))}</span>
+        <span>推广 {escape(_format_money(ad_cost))}</span>
+        <span>退款 {escape(_format_money(refund_amount))}</span>
+    </div>
+</div>
+"""
+        )
+
+    st.markdown(
+        f"""
+<div class="store-profit-strip">
+    {''.join(cards)}
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def _rank_roi_meta(row: pd.Series) -> str:
     current_roi = _format_roi(row.get("当前ROI"))
     promotion_roi = _format_roi(row.get("推广ROI"))
@@ -1728,6 +1844,8 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
     for column, (label, value, delta, tone) in zip(metric_cols, cards):
         with column:
             metric_card(label, value, delta, tone)
+
+    _render_realtime_store_profit(latest_rows)
 
     st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
 
