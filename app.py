@@ -1731,8 +1731,12 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
 
     st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
 
+    product_rows = latest_rows.copy()
+    if "is_store_adjustment" in product_rows.columns:
+        product_rows = product_rows[~product_rows["is_store_adjustment"]].copy()
+
     product_daily = (
-        latest_rows.groupby(["store", "product_id"], as_index=False)
+        product_rows.groupby(["store", "product_id"], as_index=False)
         .agg(
             销量=("sales_qty", "sum"),
             订单量=("order_count", "sum"),

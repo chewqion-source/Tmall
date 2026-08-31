@@ -426,11 +426,14 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
                 )
                 continue
 
-            sc_paid_sum = sum(num(sc.get("paidAmount")) for sc in scskus) or sku_paid
+            sc_paid_sum = sum(
+                num(sc.get("paidAmount")) * num(sc.get("quantity"), 1.0)
+                for sc in scskus
+            ) or sku_paid
             sc_qty_sum = sum(num(sc.get("quantity")) for sc in scskus) or sku_quantity
             for sc in scskus:
                 qty = num(sc.get("quantity"), 1.0)
-                paid = num(sc.get("paidAmount"))
+                paid = num(sc.get("paidAmount")) * qty
                 if paid <= 0 and sc_paid_sum:
                     paid = sku_paid * qty / sc_qty_sum
                 rows.append(
