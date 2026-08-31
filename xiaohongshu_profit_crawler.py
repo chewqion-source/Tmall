@@ -626,7 +626,28 @@ def apply_costs(df: pd.DataFrame) -> pd.DataFrame:
     df["快递费"] = freights
     df["成本匹配状态"] = statuses
     df["货品成本"] = df["单件货价"] * df["SKU成交件数"]
-    df["快递成本"] = df["快递费"] * df["SKU订单数"]
+    if "订单号" not in df.columns:
+        df["快递成本"] = df["快递费"] * df["SKU订单数"]
+        return df
+
+    df["快递成本"] = 0.0
+    for _order_id, order_rows in df.groupby("订单号", dropna=False):
+        idx = order_rows.index
+        shipping_values = order_rows["快递费"][order_rows["快递费"] > 0]
+        if shipping_values.empty:
+            continue
+
+        order_shipping = float(shipping_values.max())
+        merchandise_total = float(order_rows["货品成本"].sum())
+        quantity_total = float(order_rows["SKU成交件数"].sum())
+        if merchandise_total > 0:
+            weights = order_rows["货品成本"] / merchandise_total
+        elif quantity_total > 0:
+            weights = order_rows["SKU成交件数"] / quantity_total
+        else:
+            weights = pd.Series(1 / len(order_rows), index=idx)
+
+        df.loc[idx, "快递成本"] = (weights * order_shipping).round(4)
     return df
 
 
@@ -645,8 +666,19 @@ def build_profit(
         )
     else:
         grouped = (
-            orders_df.groupby(["店铺", *keys, "商品名称"], as_index=False)
-            .agg({"支付金额": "sum", "SKU订单数": "sum", "SKU成交件数": "sum"})
+            apply_costs(orders_df).groupby(["店铺", *keys, "商品名称"], as_index=False)
+            .agg(
+                {
+                    "支付金额": "sum",
+                    "SKU订单数": "sum",
+                    "SKU成交件数": "sum",
+                    "单件货价": "last",
+                    "快递费": "max",
+                    "货品成本": "sum",
+                    "快递成本": "sum",
+                    "成本匹配状态": "last",
+                }
+            )
         )
 
     if not refunds_df.empty and not grouped.empty:
@@ -660,10 +692,13 @@ def build_profit(
         grouped["店铺"] = SHOP_NAME
         grouped["商家编码"] = ""
         grouped["SKU规格"] = ""
+        grouped["单件货价"] = 0.0
+        grouped["快递费"] = 0.0
+        grouped["货品成本"] = 0.0
+        grouped["快递成本"] = 0.0
+        grouped["成本匹配状态"] = "无订单成本"
 
     grouped["退款金额"] = pd.to_numeric(grouped.get("退款金额", 0), errors="coerce").fillna(0.0)
-    grouped = apply_costs(grouped)
-
     for col in ["店铺被投推广消耗", "推商品推广消耗", "推广后台ROI"]:
         grouped[col] = 0.0
     grouped["推广数据日期"] = ""
