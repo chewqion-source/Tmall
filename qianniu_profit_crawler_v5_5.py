@@ -59,6 +59,15 @@ SHOPS_FILE = BASE_DIR / "shops.json"
 
 GUOHUO_SHOP_NAME = "国货严选"
 GUOHUO_MARKETING_ESTIMATE_RATE = 0.20
+GUOHUO_MARKETING_EXEMPT_PRODUCT_IDS = {
+    "952900248402",
+    "949587977970",
+    "954859088828",
+    "992853929359",
+    "1058126529708",
+    "991021966779",
+    "977855300916",
+}
 STORE_PLATFORM_RATE_OVERRIDES = {
     "坐拥_宁静": 0.006,
 }
@@ -1501,14 +1510,21 @@ def integrate_shop(
         "预估营销托管费用"
     ] = 0.0
     if shop.get("name") == GUOHUO_SHOP_NAME:
+        exempt_mask = df[
+            "商品ID"
+        ].astype(str).str.strip().isin(
+            GUOHUO_MARKETING_EXEMPT_PRODUCT_IDS
+        )
         df[
             "预估营销托管费用"
-        ] = (
+        ] = np.where(
+            exempt_mask,
+            0.0,
             df[
                 "支付金额"
             ]
             *
-            GUOHUO_MARKETING_ESTIMATE_RATE
+            GUOHUO_MARKETING_ESTIMATE_RATE,
         )
 
     # 重算毛利
@@ -2617,7 +2633,7 @@ def main():
 
     print()
     print(
-        "当前实时盈亏已扣：SKU货品成本、订单快递费、平台费用、税费、推广费、当天退款成功金额；国货严选额外按支付金额20%预估营销托管费用；抖店/小红书的店铺被投推广按店铺级扣减，推商品推广按商品/SKU扣减。"
+        "当前实时盈亏已扣：SKU货品成本、订单快递费、平台费用、税费、推广费、当天退款成功金额；国货严选非豁免商品额外按支付金额20%预估营销托管费用；抖店/小红书的店铺被投推广按店铺级扣减，推商品推广按商品/SKU扣减。"
     )
 
 

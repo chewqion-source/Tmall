@@ -31,6 +31,15 @@ SUPPLIER_ID = 1000000306959207
 PLATFORM_RATE = 0.08
 TAX_RATE = 0.05
 MARKETING_ESTIMATE_RATE = 0.20
+MARKETING_EXEMPT_PRODUCT_IDS = {
+    "952900248402",
+    "949587977970",
+    "954859088828",
+    "992853929359",
+    "1058126529708",
+    "991021966779",
+    "977855300916",
+}
 PAGE_TIMEOUT = 60000
 
 PRODUCT_URL = "https://tgc.tmall.com/ds/page/supplier/product-data?from=menu"
@@ -305,7 +314,12 @@ def build_latest(products: pd.DataFrame, hosting: pd.DataFrame) -> pd.DataFrame:
     result["快递成本"] = 0.0
     result["平台费用"] = result["支付金额"] * PLATFORM_RATE
     result["税费"] = result["支付金额"] * TAX_RATE
-    result["预估营销托管费用"] = result["支付金额"] * MARKETING_ESTIMATE_RATE
+    exempt_mask = result["商品ID"].astype(str).str.strip().isin(MARKETING_EXEMPT_PRODUCT_IDS)
+    result["预估营销托管费用"] = np.where(
+        exempt_mask,
+        0.0,
+        result["支付金额"] * MARKETING_ESTIMATE_RATE,
+    )
     result["销售毛利"] = result["支付金额"] - result["平台费用"] - result["税费"]
     result["实时盈亏"] = (
         result["销售毛利"]
