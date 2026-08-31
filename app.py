@@ -202,27 +202,32 @@ def inject_dashboard_styles() -> None:
 }
 .store-profit-strip {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
     margin: 14px 0 22px;
 }
 .store-profit-card {
     border: 1px solid #dbe3ef;
-    border-left: 4px solid #94a3b8;
-    border-radius: 8px;
-    background: #ffffff;
-    padding: 12px 14px;
-    box-shadow: 0 8px 18px rgba(15, 23, 42, .05);
-    min-height: 100px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+    padding: 14px 16px;
+    box-shadow: 0 8px 22px rgba(15, 23, 42, .06);
+    min-height: 94px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
 }
 .store-profit-card.good {
-    border-left-color: #16a34a;
+    background: linear-gradient(180deg, #ecfdf5 0%, #ffffff 100%);
+    border-color: #bbf7d0;
 }
 .store-profit-card.bad {
-    border-left-color: #dc2626;
+    background: linear-gradient(180deg, #fef2f2 0%, #ffffff 100%);
+    border-color: #fecaca;
 }
 .store-profit-card.neutral {
-    border-left-color: #64748b;
+    background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
 }
 .store-profit-name {
     color: #334155;
@@ -235,6 +240,7 @@ def inject_dashboard_styles() -> None:
     font-size: 22px;
     line-height: 1.1;
     font-weight: 800;
+    white-space: nowrap;
 }
 .store-profit-card.good .store-profit-value {
     color: #15803d;
@@ -244,15 +250,25 @@ def inject_dashboard_styles() -> None:
 }
 .store-profit-meta {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
-    margin-top: 10px;
+    grid-template-columns: 1fr;
+    gap: 4px;
+    min-width: 98px;
     color: #64748b;
     font-size: 12px;
     line-height: 1.25;
 }
-.store-profit-meta span {
-    overflow-wrap: anywhere;
+.store-profit-meta-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    white-space: nowrap;
+}
+.store-profit-meta-label {
+    color: #64748b;
+}
+.store-profit-meta-value {
+    color: #334155;
+    font-variant-numeric: tabular-nums;
 }
 .section-title-row {
     display: flex;
@@ -1527,12 +1543,23 @@ def _render_realtime_store_profit(latest_rows: pd.DataFrame) -> None:
         cards.append(
             f"""
 <div class="store-profit-card {escape(tone)}">
-    <div class="store-profit-name">{escape(str(row["store"]))}</div>
-    <div class="store-profit-value">{escape(_format_money(profit))}</div>
+    <div>
+        <div class="store-profit-name">{escape(str(row["store"]))}</div>
+        <div class="store-profit-value">{escape(_format_money(profit))}</div>
+    </div>
     <div class="store-profit-meta">
-        <span>支付 {escape(_format_money(pay_amount))}</span>
-        <span>推广 {escape(_format_money(ad_cost))}</span>
-        <span>退款 {escape(_format_money(refund_amount))}</span>
+        <div class="store-profit-meta-row">
+            <span class="store-profit-meta-label">支付</span>
+            <span class="store-profit-meta-value">{escape(_format_money(pay_amount))}</span>
+        </div>
+        <div class="store-profit-meta-row">
+            <span class="store-profit-meta-label">推广</span>
+            <span class="store-profit-meta-value">{escape(_format_money(ad_cost))}</span>
+        </div>
+        <div class="store-profit-meta-row">
+            <span class="store-profit-meta-label">退款</span>
+            <span class="store-profit-meta-value">{escape(_format_money(refund_amount))}</span>
+        </div>
     </div>
 </div>
 """
