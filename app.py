@@ -1519,40 +1519,93 @@ def _short_reason_name(value: object, fallback: object = "") -> str:
     return text if len(text) <= 16 else f"{text[:16]}..."
 
 
-def _store_profit_reason(store_rows: pd.DataFrame, store_profit: float, ad_cost: float, refund_amount: float) -> str:
+def _sum_store_column(rows: pd.DataFrame, column: str) -> float:
+    if column not in rows.columns:
+        return 0.0
+    return float(pd.to_numeric(rows[column], errors="coerce").fillna(0).sum())
+
+
+def _ratio_text(value: float, base: float) -> str:
+    if base <= 0:
+        return "-"
+    return f"{value / base:.1%}"
+
+
+def _store_product_reason(product_rows: pd.DataFrame, store_profit: float) -> str | None:
+    if product_rows.empty or not {"product_id", "profit"}.issubset(product_rows.columns):
+        return None
+
+    group_cols = ["product_id"]
+    if "product_name" in product_rows.columns:
+        group_cols.append("product_name")
+    product_profit = (
+        product_rows.groupby(group_cols, dropna=False, as_index=False)
+        .agg(profit=("profit", "sum"))
+    )
+    product_profit["profit"] = pd.to_numeric(product_profit["profit"], errors="coerce").fillna(0)
+    if store_profit >= 0:
+        reason_row = product_profit.sort_values("profit", ascending=False).head(1)
+        if not reason_row.empty and float(reason_row.iloc[0]["profit"]) > 0:
+            row = reason_row.iloc[0]
+            name = _short_reason_name(row.get("product_name"), row.get("product_id"))
+            return f"主因：{name} 贡献 {_format_money(float(row['profit']))}"
+    else:
+        reason_row = product_profit.sort_values("profit", ascending=True).head(1)
+        if not reason_row.empty and float(reason_row.iloc[0]["profit"]) < 0:
+            row = reason_row.iloc[0]
+            name = _short_reason_name(row.get("product_name"), row.get("product_id"))
+            return f"主因：{name} 亏损 {_format_money(abs(float(row['profit'])))}"
+    return None
+
+
+def _store_profit_reason(store_rows: pd.DataFrame, store_profit: float, pay_amount: float, ad_cost: float, refund_amount: float) -> str:
     product_rows = store_rows.copy()
     if "is_store_adjustment" in product_rows.columns:
         product_rows = product_rows[~product_rows["is_store_adjustment"].fillna(False).astype(bool)].copy()
 
-    if not product_rows.empty and {"product_id", "profit"}.issubset(product_rows.columns):
-        group_cols = ["product_id"]
-        if "product_name" in product_rows.columns:
-            group_cols.append("product_name")
-        product_profit = (
-            product_rows.groupby(group_cols, dropna=False, as_index=False)
-            .agg(profit=("profit", "sum"))
-        )
-        product_profit["profit"] = pd.to_numeric(product_profit["profit"], errors="coerce").fillna(0)
-        if store_profit >= 0:
-            reason_row = product_profit.sort_values("profit", ascending=False).head(1)
-            if not reason_row.empty and float(reason_row.iloc[0]["profit"]) > 0:
-                row = reason_row.iloc[0]
-                name = _short_reason_name(row.get("product_name"), row.get("product_id"))
-                return f"主因：{name} 贡献 {_format_money(float(row['profit']))}"
-        else:
-            reason_row = product_profit.sort_values("profit", ascending=True).head(1)
-            if not reason_row.empty and float(reason_row.iloc[0]["profit"]) < 0:
-                row = reason_row.iloc[0]
-                name = _short_reason_name(row.get("product_name"), row.get("product_id"))
-                return f"主因：{name} 亏损 {_format_money(abs(float(row['profit'])))}"
+    merch_cost = _sum_store_column(store_rows, "merch_cost")
+    freight_cost = _sum_store_column(store_rows, "freight_cost")
+    platform_fee = _sum_store_column(store_rows, "platform_fee")
+    tax_fee = _sum_store_column(store_rows, "tax_fee")
+    marketing_cost = _sum_store_column(store_rows, "estimated_marketing_cost")
+    cost_pressure = merch_cost + freight_cost + platform_fee + tax_fee + marketing_cost
 
-    if store_profit < 0 and refund_amount > 0:
-        return f"主因：退款 {_format_money(refund_amount)}"
-    if store_profit < 0 and ad_cost > 0:
-        return f"主因：推广消耗 {_format_money(ad_cost)}"
-    if store_profit >= 0:
-        return "主因：成本和推广控制较稳"
-    return "主因：暂无明显单品波动"
+    if store_profit < 0:
+        drivers = [
+            ("退款激增", refund_amount, refund_amount / pay_amount if pay_amount > 0 else 0, 0.12),
+            ("推广偏高", ad_cost, ad_cost / pay_amount if pay_amount > 0 else 0, 0.18),
+            ("货品成本偏高", merch_cost, merch_cost / pay_amount if pay_amount > 0 else 0, 0.55),
+            ("快递成本偏高", freight_cost, freight_cost / pay_amount if pay_amount > 0 else 0, 0.16),
+            ("平台税费压力", platform_fee + tax_fee, (platform_fee + tax_fee) / pay_amount if pay_amount > 0 else 0, 0.09),
+            ("营销托管偏高", marketing_cost, marketing_cost / pay_amount if pay_amount > 0 else 0, 0.12),
+        ]
+        active = [
+            item
+            for item in drivers
+            if item[1] > 0 and item[2] >= item[3]
+        ]
+        if active:
+            name, amount, ratio, _threshold = sorted(active, key=lambda item: item[2], reverse=True)[0]
+            return f"主因：{name} { _format_money(amount)} / 占支付 {_ratio_text(amount, pay_amount)}"
+
+        product_reason = _store_product_reason(product_rows, store_profit)
+        if product_reason:
+            return product_reason
+        if cost_pressure > pay_amount:
+            return f"主因：总成本超过支付 {_format_money(cost_pressure - pay_amount)}"
+        return "主因：暂无明显单项，需看单品结构"
+
+    margin = (store_profit / pay_amount) if pay_amount > 0 else 0
+    product_reason = _store_product_reason(product_rows, store_profit)
+    if margin >= 0.12 and product_reason:
+        return product_reason
+    if ad_cost == 0 and store_profit > 0:
+        return "主因：自然成交贡献，推广消耗低"
+    if merch_cost > 0 and pay_amount > 0 and merch_cost / pay_amount <= 0.45:
+        return f"主因：货品成本可控 / 占支付 {_ratio_text(merch_cost, pay_amount)}"
+    if refund_amount <= 0 and store_profit > 0:
+        return "主因：无退款拖累，利润稳定"
+    return product_reason or "主因：成本和推广控制较稳"
 
 
 def _render_realtime_store_profit(latest_rows: pd.DataFrame) -> None:
@@ -1594,7 +1647,7 @@ def _render_realtime_store_profit(latest_rows: pd.DataFrame) -> None:
         ad_cost = float(row.get("ad_cost", 0.0) or 0.0)
         refund_amount = float(row.get("refund_amount", 0.0) or 0.0)
         current_store_rows = store_rows[store_rows["store"].astype(str).eq(str(row["store"]))].copy()
-        reason = _store_profit_reason(current_store_rows, profit, ad_cost, refund_amount)
+        reason = _store_profit_reason(current_store_rows, profit, pay_amount, ad_cost, refund_amount)
         cards.append(
             f"""
 <div class="store-profit-card {escape(tone)}">
