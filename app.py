@@ -60,19 +60,6 @@ def inject_dashboard_styles() -> None:
     st.markdown(
         """
 <style>
-.st-key-refresh_data_icon {
-    display: flex;
-    justify-content: flex-end;
-}
-.st-key-refresh_data_icon button {
-    width: 44px;
-    height: 44px;
-    min-height: 44px;
-    padding: 0;
-    border-radius: 8px;
-    font-size: 22px;
-    line-height: 1;
-}
 .st-key-profit_advice_fab {
     position: fixed;
     right: 24px;
@@ -2045,13 +2032,7 @@ except Exception as exc:
     st.error(f"读取失败：{exc}")
     st.stop()
 
-title_col, refresh_col = st.columns([5, 1], vertical_alignment="center")
-with title_col:
-    st.title("店铺与商品")
-with refresh_col:
-    if st.button("↻", type="primary", key="refresh_data_icon", help="刷新数据"):
-        st.cache_data.clear()
-        st.rerun()
+st.title("店铺与商品")
 
 realtime_daily, realtime_generated_at = load_realtime_snapshot()
 data_note = (
