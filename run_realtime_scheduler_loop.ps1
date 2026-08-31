@@ -46,12 +46,13 @@ while ($true) {
         )
 
         $isTwoHourSlot = (
-            ($now.Minute -eq 0) -and
+            ($now.Minute -ge 0) -and
+            ($now.Minute -le 4) -and
             ((($now.Hour - 9) % 2) -eq 0)
         )
 
         if ($inWindow -and $isTwoHourSlot) {
-            $slot = $now.ToString("yyyyMMddHHmm")
+            $slot = $now.ToString("yyyyMMddHH") + "00"
             $lastSlot = Get-LastSlot
 
             if ($slot -ne $lastSlot) {
