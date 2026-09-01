@@ -396,6 +396,9 @@ def fetch_promotions(page: CdpPage, day: str, page_size: int = 50, max_pages: in
 def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for package in orders:
+        if text(package.get("status")) == "998" or "取消" in text(package.get("statusDesc")):
+            continue
+
         package_id = text(package.get("packageId"))
         order_id = text(package.get("orderId") or package.get("order_id") or package_id)
         paid_at = text(package.get("paidAt") or package.get("orderedAt") or package.get("createdAt"))
