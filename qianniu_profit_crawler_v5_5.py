@@ -58,7 +58,7 @@ DATA_ROOT = BASE_DIR / "data"
 SHOPS_FILE = BASE_DIR / "shops.json"
 
 GUOHUO_SHOP_NAME = "国货严选"
-GUOHUO_MARKETING_ESTIMATE_RATE = 0.20
+GUOHUO_MARKETING_ESTIMATE_RATE = 0.05
 GUOHUO_MARKETING_EXEMPT_PRODUCT_IDS = {
     "952900248402",
     "949587977970",
@@ -2686,7 +2686,7 @@ def main():
 
     print()
     print(
-        "当前实时盈亏已扣：SKU货品成本、订单快递费、平台费用、税费、推广费、当天退款成功金额；国货严选非豁免商品额外按支付金额20%预估营销托管费用；抖店/小红书的店铺被投推广按店铺级扣减，推商品推广按商品/SKU扣减。"
+        "当前实时盈亏已扣：SKU货品成本、订单快递费、平台费用、税费、推广费、当天退款成功金额；国货严选非豁免商品额外按支付金额5%预估营销托管费用；抖店/小红书的店铺被投推广按店铺级扣减，推商品推广按商品/SKU扣减。"
     )
 
 

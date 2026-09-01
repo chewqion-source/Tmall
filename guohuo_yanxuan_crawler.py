@@ -30,7 +30,7 @@ CDP_PORT = 9225
 SUPPLIER_ID = 1000000306959207
 PLATFORM_RATE = 0.08
 TAX_RATE = 0.05
-MARKETING_ESTIMATE_RATE = 0.20
+MARKETING_ESTIMATE_RATE = 0.05
 MARKETING_EXEMPT_PRODUCT_IDS = {
     "952900248402",
     "949587977970",
@@ -383,7 +383,7 @@ async def async_main() -> dict:
     print(f"成本表新增SKU：{added}，已有SKU：{updated}")
     print(f"支付金额：RMB {total_sales:.2f}")
     print(f"投流托管费用：RMB {total_ad:.2f}")
-    print(f"预估营销托管费用(20%)：RMB {total_est:.2f}")
+    print(f"预估营销托管费用(5%)：RMB {total_est:.2f}")
 
     return {
         "success": True,
