@@ -687,9 +687,29 @@ def params_are_today(params):
     start_matches = []
     end_matches = []
 
+    def is_start_key(key):
+        key_lower = str(key).lower()
+        return (
+            "start" in key_lower
+            or
+            "begin" in key_lower
+            or
+            "from" in key_lower
+        )
+
+    def is_end_key(key):
+        key_lower = str(key).lower()
+        return (
+            "end" in key_lower
+            or
+            "stop" in key_lower
+            or
+            "to" in key_lower
+        )
+
     for key, value in date_params:
 
-        if abs(
+        if is_start_key(key) and abs(
             value
             -
             start_ms
@@ -703,23 +723,27 @@ def params_are_today(params):
             )
 
         if (
-            abs(
-                value
-                -
-                end_ms
-            )
-            <= tolerance
-            or
-            abs(
-                value
-                -
-                (
+            is_end_key(key)
+            and
+            (
+                abs(
+                    value
+                    -
                     end_ms
-                    +
-                    1
                 )
+                <= tolerance
+                or
+                abs(
+                    value
+                    -
+                    (
+                        end_ms
+                        +
+                        1
+                    )
+                )
+                <= tolerance
             )
-            <= tolerance
         ):
 
             end_matches.append(
@@ -728,6 +752,32 @@ def params_are_today(params):
                     value
                 )
             )
+
+    if not start_matches:
+        # Some older request variants do not include start/end in the key name.
+        # Only use this fallback when a single date-like parameter is present;
+        # otherwise an end-of-yesterday value can be mistaken for today's start.
+        ambiguous_values = [
+            (key, value)
+            for key, value in date_params
+            if not is_start_key(key) and not is_end_key(key)
+        ]
+
+        if len(date_params) == 1 and ambiguous_values:
+            key, value = ambiguous_values[0]
+
+            if abs(
+                value
+                -
+                start_ms
+            ) <= tolerance:
+
+                start_matches.append(
+                    (
+                        key,
+                        value
+                    )
+                )
 
     # 某些页面只传开始时间，此时只要开始时间就是今天，也接受。
     ok = bool(
