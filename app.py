@@ -98,14 +98,24 @@ def inject_dashboard_styles() -> None:
 .st-key-rank_store_1 button,
 .st-key-rank_store_2 button,
 .st-key-rank_store_3 button,
-.st-key-rank_store_4 button {
+.st-key-rank_store_4 button,
+.st-key-rank_store_5 button,
+.st-key-rank_store_6 button,
+.st-key-rank_store_7 button,
+.st-key-rank_store_8 button,
+.st-key-rank_store_9 button {
     justify-content: flex-start;
 }
 .st-key-store_select_0 button,
 .st-key-store_select_1 button,
 .st-key-store_select_2 button,
 .st-key-store_select_3 button,
-.st-key-store_select_4 button {
+.st-key-store_select_4 button,
+.st-key-store_select_5 button,
+.st-key-store_select_6 button,
+.st-key-store_select_7 button,
+.st-key-store_select_8 button,
+.st-key-store_select_9 button {
     min-height: 38px;
 }
 [data-testid="stSidebar"] h2 {

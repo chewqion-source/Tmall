@@ -1953,13 +1953,20 @@ def _snapshot_optional_number(row, column):
     if column not in row.index:
         return None
 
+    raw_value = row.get(
+        column
+    )
+
+    if pd.isna(
+        raw_value
+    ):
+        return None
+
     try:
         value = clean_numeric(
             pd.Series(
                 [
-                    row.get(
-                        column
-                    )
+                    raw_value
                 ]
             )
         ).iloc[0]
@@ -1971,6 +1978,24 @@ def _snapshot_optional_number(row, column):
 
     return float(
         value
+    )
+
+
+def _snapshot_first_number(row, columns, default=0.0):
+    for column in columns:
+        if column not in row.index:
+            continue
+
+        value = _snapshot_optional_number(
+            row,
+            column
+        )
+
+        if value is not None:
+            return value
+
+    return float(
+        default
     )
 
 
@@ -2019,13 +2044,20 @@ def write_realtime_snapshot(df):
     store_adjustments = {}
 
     for _, row in df.iterrows():
-        captured_at = str(
-            row.get(
-                "抓取时间",
-                generated_at
-            )
-            or
+        captured_raw = row.get(
+            "抓取时间",
             generated_at
+        )
+
+        if pd.isna(
+            captured_raw
+        ) or not str(
+            captured_raw
+        ).strip():
+            captured_raw = generated_at
+
+        captured_at = str(
+            captured_raw
         )
         date_text = captured_at[:10]
 
@@ -2054,7 +2086,13 @@ def write_realtime_snapshot(df):
                 "captured_at": captured_at,
                 "product_id": normalize_id(row.get("商品ID", "")),
                 "product_name": str(row.get("商品名称", "")),
-                "sales_qty": _snapshot_number(row, "支付件数"),
+                "sales_qty": _snapshot_first_number(
+                    row,
+                    [
+                        "支付件数",
+                        "SKU成交件数",
+                    ]
+                ),
                 "pay_amount": pay_amount,
                 "normal_site_ad_cost": normal_site_ad_cost,
                 "smart_ad_cost": smart_ad_cost,
