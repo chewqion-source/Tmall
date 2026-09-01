@@ -26,17 +26,19 @@ import pandas as pd
 import websocket
 
 from sku_cost_utils import merge_duplicate_sku_cost_rows, normalize_sku_spec
+from fee_config_utils import fee_rates_for_store
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_ROOT = BASE_DIR / "data"
 CONFIG_DIR = BASE_DIR / "config"
 SKU_COST_FILE = CONFIG_DIR / "sku_cost.xlsx"
+FEE_CONFIG_FILE = CONFIG_DIR / "fee_config.xlsx"
 SHOP_NAME = "盲盒抖店"
 SHOP_DIR = DATA_ROOT / SHOP_NAME
 DEFAULT_PORT = 9226
-PLATFORM_RATE = 0.05
-TAX_RATE = 0.05
+DEFAULT_PLATFORM_RATE = 0.05
+DEFAULT_TAX_RATE = 0.05
 
 ORDER_LIST_URL = "https://fxg.jinritemai.com/api/order/searchlist"
 AFTERSALE_LIST_URL = "https://fxg.jinritemai.com/after_sale/pc/list"
@@ -1166,10 +1168,13 @@ def build_profit(
         grouped,
         promotions_df if promotions_df is not None else pd.DataFrame(),
     )
-    grouped["平台扣点"] = PLATFORM_RATE
-    grouped["税点"] = TAX_RATE
-    grouped["平台费用"] = grouped["支付金额"] * PLATFORM_RATE
-    grouped["税费"] = grouped["支付金额"] * TAX_RATE
+    fee_rates = fee_rates_for_store(FEE_CONFIG_FILE, SHOP_NAME)
+    platform_rate = fee_rates.get("platform_rate", DEFAULT_PLATFORM_RATE)
+    tax_rate = fee_rates.get("tax_rate", DEFAULT_TAX_RATE)
+    grouped["平台扣点"] = platform_rate
+    grouped["税点"] = tax_rate
+    grouped["平台费用"] = grouped["支付金额"] * platform_rate
+    grouped["税费"] = grouped["支付金额"] * tax_rate
     grouped["实时盈亏"] = (
         grouped["支付金额"]
         - grouped["退款金额"]

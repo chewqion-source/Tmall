@@ -50,15 +50,18 @@ import urllib.request
 import numpy as np
 import pandas as pd
 
+from fee_config_utils import fee_rates_for_store
+
 
 VERSION = "V5.5"
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_ROOT = BASE_DIR / "data"
+CONFIG_DIR = BASE_DIR / "config"
 SHOPS_FILE = BASE_DIR / "shops.json"
+FEE_CONFIG_FILE = CONFIG_DIR / "fee_config.xlsx"
 
 GUOHUO_SHOP_NAME = "国货严选"
-GUOHUO_MARKETING_ESTIMATE_RATE = 0.05
 GUOHUO_MARKETING_EXEMPT_PRODUCT_IDS = {
     "952900248402",
     "949587977970",
@@ -68,10 +71,6 @@ GUOHUO_MARKETING_EXEMPT_PRODUCT_IDS = {
     "991021966779",
     "977855300916",
 }
-STORE_PLATFORM_RATE_OVERRIDES = {
-    "坐拥_宁静": 0.006,
-}
-
 SKU_SCRIPT = BASE_DIR / "order_sku_crawler_v2_5_4.py"
 PROFIT_SCRIPT = BASE_DIR / "qianniu_profit_crawler.py"
 REFUND_SCRIPT = BASE_DIR / "refund_crawler_v3_6_2.py"
@@ -254,10 +253,15 @@ def shop_port(shop):
 
 
 def platform_rate_for_shop(name):
-    return STORE_PLATFORM_RATE_OVERRIDES.get(
-        str(name or "").strip(),
-        None,
-    )
+    return fee_rates_for_store(FEE_CONFIG_FILE, str(name or "").strip())["platform_rate"]
+
+
+def tax_rate_for_shop(name):
+    return fee_rates_for_store(FEE_CONFIG_FILE, str(name or "").strip())["tax_rate"]
+
+
+def marketing_rate_for_shop(name):
+    return fee_rates_for_store(FEE_CONFIG_FILE, str(name or "").strip())["marketing_rate"]
 
 
 def with_only_shop(name, func):
@@ -1399,13 +1403,15 @@ def integrate_shop(
             df[col]
         )
 
-    override_platform_rate = platform_rate_for_shop(
-        shop.get("name")
-    )
-    if override_platform_rate is not None:
-        df[
-            "平台扣点"
-        ] = override_platform_rate
+    store_platform_rate = platform_rate_for_shop(shop.get("name"))
+    store_tax_rate = tax_rate_for_shop(shop.get("name"))
+    store_marketing_rate = marketing_rate_for_shop(shop.get("name"))
+    df[
+        "平台扣点"
+    ] = store_platform_rate
+    df[
+        "税点"
+    ] = store_tax_rate
 
     # 使用订单 SKU 已识别到的单件货成本和快递成本。
     # 即使存在未匹配 SKU，也先计入已知成本，同时保留未匹配行数提示。
@@ -1509,11 +1515,16 @@ def integrate_shop(
     df[
         "预估营销托管费用"
     ] = 0.0
-    if shop.get("name") == GUOHUO_SHOP_NAME:
+    if store_marketing_rate > 0:
+        exempt_product_ids = (
+            GUOHUO_MARKETING_EXEMPT_PRODUCT_IDS
+            if shop.get("name") == GUOHUO_SHOP_NAME
+            else set()
+        )
         exempt_mask = df[
             "商品ID"
         ].astype(str).str.strip().isin(
-            GUOHUO_MARKETING_EXEMPT_PRODUCT_IDS
+            exempt_product_ids
         )
         df[
             "预估营销托管费用"
@@ -1524,7 +1535,7 @@ def integrate_shop(
                 "支付金额"
             ]
             *
-            GUOHUO_MARKETING_ESTIMATE_RATE,
+            store_marketing_rate,
         )
 
     # 重算毛利
@@ -2686,7 +2697,7 @@ def main():
 
     print()
     print(
-        "当前实时盈亏已扣：SKU货品成本、订单快递费、平台费用、税费、推广费、当天退款成功金额；国货严选非豁免商品额外按支付金额5%预估营销托管费用；抖店/小红书的店铺被投推广按店铺级扣减，推商品推广按商品/SKU扣减。"
+        "当前实时盈亏已扣：SKU货品成本、订单快递费、平台费用、税费、推广费、当天退款成功金额；配置了营销托管比例的店铺会按支付金额预估扣减；抖店/小红书的店铺被投推广按店铺级扣减，推商品推广按商品/SKU扣减。"
     )
 
 

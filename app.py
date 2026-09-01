@@ -26,6 +26,7 @@ from data_loader import (
 )
 from ui_helpers import ai_image_url, koc_url, roi_url, sidebar_link, upload_url
 from sku_cost_utils import merge_duplicate_sku_cost_rows
+from fee_config_utils import FEE_CONFIG_HEADERS, load_fee_config_frame, save_fee_config_frame
 
 
 st.set_page_config(page_title="店铺数据", page_icon="📊", layout="wide")
@@ -45,9 +46,10 @@ OLD_ZY_STORE_NAME = "坐拥" + "宁静"
 SHOP_NAME_ALIASES = {
     OLD_ZY_STORE_NAME: "坐拥_宁静",
 }
-DEFAULT_STORE_OPTIONS = ["易丽洁", "咖时光", "坐拥_宁静", "国货严选"]
+DEFAULT_STORE_OPTIONS = ["易丽洁", "咖时光", "坐拥_宁静", "国货严选", "盲盒抖店", "盲盒千帆"]
 DATA_DIR = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
 SKU_COST_PATH = Path(os.environ.get("SKU_COST_FILE", DATA_DIR / "sku_cost.xlsx"))
+FEE_CONFIG_PATH = Path(os.environ.get("FEE_CONFIG_FILE", DATA_DIR / "fee_config.xlsx"))
 REALTIME_SNAPSHOT_PATH = Path(
     os.environ.get("TMALL_REALTIME_FILE", DATA_DIR / "realtime" / "latest.json")
 )
@@ -749,6 +751,24 @@ def sku_cost_download_bytes(data: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 
+def save_fee_config_with_backup(data: pd.DataFrame, path: Path = FEE_CONFIG_PATH) -> Path | None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path = None
+    if path.exists():
+        backup_dir = path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / f"fee_config_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+        backup_path.write_bytes(path.read_bytes())
+    save_fee_config_frame(data, path)
+    return backup_path
+
+
+def fee_config_download_bytes(data: pd.DataFrame) -> bytes:
+    output = BytesIO()
+    data.to_excel(output, index=False, sheet_name="费用比例配置")
+    return output.getvalue()
+
+
 def read_json_file(path: Path) -> dict[str, object]:
     if not path.exists():
         return {}
@@ -1146,6 +1166,51 @@ def render_sku_cost_manager() -> None:
     st.title("SKU 成本维护")
     st.caption(f"当前文件：{SKU_COST_PATH}")
 
+    stores = sorted(
+        {
+            *DEFAULT_STORE_OPTIONS,
+            *[normalize_store_name(store) for store in load_sku_cost_frame()["店铺"].dropna().unique() if str(store).strip()],
+        }
+    )
+
+    st.markdown("### 店铺费用比例配置")
+    st.caption(f"当前文件：{FEE_CONFIG_PATH}。平台扣点、税点、营销托管比例都按百分比填写，例如 5 代表 5%。")
+    fee_data = load_fee_config_frame(FEE_CONFIG_PATH, stores)
+    fee_editor = st.data_editor(
+        fee_data,
+        hide_index=True,
+        num_rows="dynamic",
+        width="stretch",
+        height=250,
+        column_config={
+            "店铺": st.column_config.SelectboxColumn("店铺", options=stores),
+            "平台扣点": st.column_config.NumberColumn("平台扣点(%)", min_value=0, step=0.1, format="%.2f"),
+            "税点": st.column_config.NumberColumn("税点(%)", min_value=0, step=0.1, format="%.2f"),
+            "营销托管比例": st.column_config.NumberColumn("营销托管比例(%)", min_value=0, step=0.1, format="%.2f"),
+            "备注": st.column_config.TextColumn("备注"),
+        },
+        key="fee_config_editor",
+    )
+    fee_action_cols = st.columns([1, 1, 4])
+    with fee_action_cols[0]:
+        if st.button("保存费用配置", type="primary", width="stretch"):
+            backup_path = save_fee_config_with_backup(fee_editor)
+            st.success(
+                "费用配置保存成功。"
+                + (f" 已备份旧文件：{backup_path.name}" if backup_path else "")
+            )
+            st.rerun()
+    with fee_action_cols[1]:
+        st.download_button(
+            "下载费用配置",
+            data=fee_config_download_bytes(fee_data),
+            file_name="fee_config.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+        )
+
+    st.divider()
+
     uploaded = st.file_uploader("导入现有 sku_cost.xlsx", type=["xlsx"])
     if uploaded is not None:
         imported = pd.read_excel(uploaded, dtype={"店铺": str, "商品ID": str, "商家编码": str, "SKU规格": str})
@@ -1165,12 +1230,6 @@ def render_sku_cost_manager() -> None:
     metric_cols[3].metric("涉及店铺", f"{data['店铺'].replace('', pd.NA).dropna().nunique():,.0f}")
 
     filter_cols = st.columns([1, 1.2, 1])
-    stores = sorted(
-        {
-            *DEFAULT_STORE_OPTIONS,
-            *[normalize_store_name(store) for store in data["店铺"].dropna().unique() if str(store).strip()],
-        }
-    )
     with filter_cols[0]:
         selected_store = st.selectbox("店铺筛选", ["全部"] + stores)
     with filter_cols[1]:

@@ -9,6 +9,7 @@ import pandas as pd
 import paramiko
 
 from sku_cost_utils import merge_duplicate_sku_cost_rows
+from fee_config_utils import clean_fee_config_frame, load_fee_config_frame, save_fee_config_frame
 
 
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
@@ -16,11 +17,13 @@ logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
 BASE_DIR = Path(__file__).resolve().parent
 LOCAL_SKU_COST = BASE_DIR / "config" / "sku_cost.xlsx"
+LOCAL_FEE_CONFIG = BASE_DIR / "config" / "fee_config.xlsx"
 SSH_KEY_FILE = BASE_DIR / ".ssh_tmp" / "tmall_codex_temp_ed25519"
 
 REMOTE_HOST = "150.158.133.102"
 REMOTE_USER = "ubuntu"
 REMOTE_SKU_COST = "/opt/tmall-dashboard/data/sku_cost.xlsx"
+REMOTE_FEE_CONFIG = "/opt/tmall-dashboard/data/fee_config.xlsx"
 OLD_ZY_STORE_NAME = "坐拥" + "宁静"
 SHOP_NAME_ALIASES = {
     OLD_ZY_STORE_NAME: "坐拥_宁静",
@@ -94,6 +97,15 @@ def _save_sku_cost(data: pd.DataFrame, path: Path) -> None:
     cleaned.to_excel(path, index=False, sheet_name="SKU成本配置")
 
 
+def _merge_fee_config(local_path: Path, remote_path: Path) -> int:
+    local = load_fee_config_frame(local_path) if local_path.exists() else clean_fee_config_frame(pd.DataFrame())
+    remote = load_fee_config_frame(remote_path) if remote_path.exists() else clean_fee_config_frame(pd.DataFrame())
+    merged = clean_fee_config_frame(pd.concat([local, remote], ignore_index=True, sort=False))
+    save_fee_config_frame(merged, local_path)
+    print(f"费用配置已合并线上版本：本地 {len(local)} 行，线上 {len(remote)} 行，合并后 {len(merged)} 行")
+    return len(merged)
+
+
 def _connect():
     key = paramiko.Ed25519Key.from_private_key_file(str(SSH_KEY_FILE))
     last_error = None
@@ -125,9 +137,17 @@ def _connect():
 def merge_remote_to_local() -> int:
     client = _connect()
     temp_remote = BASE_DIR / "config" / "_remote_sku_cost.xlsx"
+    temp_fee_remote = BASE_DIR / "config" / "_remote_fee_config.xlsx"
     sftp = client.open_sftp()
     try:
-        sftp.get(REMOTE_SKU_COST, str(temp_remote))
+        try:
+            sftp.get(REMOTE_SKU_COST, str(temp_remote))
+        except FileNotFoundError:
+            print(f"线上成本表不存在，跳过拉取：{REMOTE_SKU_COST}")
+        try:
+            sftp.get(REMOTE_FEE_CONFIG, str(temp_fee_remote))
+        except FileNotFoundError:
+            print(f"线上费用配置不存在，将使用本地默认配置：{REMOTE_FEE_CONFIG}")
     finally:
         sftp.close()
         client.close()
@@ -149,6 +169,17 @@ def merge_remote_to_local() -> int:
     merged = pd.concat([local, remote], ignore_index=True, sort=False)
     _save_sku_cost(merged, LOCAL_SKU_COST)
     print(f"成本表已合并线上版本：本地 {len(local)} 行，线上 {len(remote)} 行，合并后 {len(_read_sku_cost(LOCAL_SKU_COST))} 行")
+    if LOCAL_FEE_CONFIG.exists():
+        backup = (
+            BASE_DIR
+            / "config"
+            / "backups"
+            / f"fee_config_before_remote_merge_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+        )
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_bytes(LOCAL_FEE_CONFIG.read_bytes())
+    _merge_fee_config(LOCAL_FEE_CONFIG, temp_fee_remote)
+    temp_fee_remote.unlink(missing_ok=True)
     return 0
 
 
@@ -162,12 +193,16 @@ def upload_local_to_remote() -> int:
     sftp = client.open_sftp()
     try:
         sftp.put(str(LOCAL_SKU_COST), REMOTE_SKU_COST)
+        if not LOCAL_FEE_CONFIG.exists():
+            save_fee_config_frame(clean_fee_config_frame(pd.DataFrame()), LOCAL_FEE_CONFIG)
+        sftp.put(str(LOCAL_FEE_CONFIG), REMOTE_FEE_CONFIG)
     finally:
         sftp.close()
         client.close()
 
     rows = len(_read_sku_cost(LOCAL_SKU_COST))
-    print(f"成本表已同步到网站：{rows} 行")
+    fee_rows = len(load_fee_config_frame(LOCAL_FEE_CONFIG))
+    print(f"成本表已同步到网站：{rows} 行；费用配置：{fee_rows} 行")
     return 0
 
 

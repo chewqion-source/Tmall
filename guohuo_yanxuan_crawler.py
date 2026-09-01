@@ -21,16 +21,20 @@ import numpy as np
 import pandas as pd
 from playwright.async_api import async_playwright
 
+from fee_config_utils import fee_rates_for_store
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_ROOT = BASE_DIR / "data"
+CONFIG_DIR = BASE_DIR / "config"
 SHOP_NAME = "国货严选"
 SAFE_SHOP_NAME = SHOP_NAME
 CDP_PORT = 9225
 SUPPLIER_ID = 1000000306959207
-PLATFORM_RATE = 0.08
-TAX_RATE = 0.05
-MARKETING_ESTIMATE_RATE = 0.05
+FEE_CONFIG_FILE = CONFIG_DIR / "fee_config.xlsx"
+DEFAULT_PLATFORM_RATE = 0.08
+DEFAULT_TAX_RATE = 0.05
+DEFAULT_MARKETING_ESTIMATE_RATE = 0.05
 MARKETING_EXEMPT_PRODUCT_IDS = {
     "952900248402",
     "949587977970",
@@ -284,6 +288,11 @@ def build_latest(products: pd.DataFrame, hosting: pd.DataFrame) -> pd.DataFrame:
     if products.empty:
         raise RuntimeError("国货严选商品实时数据为空")
 
+    fee_rates = fee_rates_for_store(FEE_CONFIG_FILE, SHOP_NAME)
+    platform_rate = fee_rates.get("platform_rate", DEFAULT_PLATFORM_RATE)
+    tax_rate = fee_rates.get("tax_rate", DEFAULT_TAX_RATE)
+    marketing_rate = fee_rates.get("marketing_rate", DEFAULT_MARKETING_ESTIMATE_RATE)
+
     result = products.merge(hosting, on="商品ID", how="left")
     money_cols = [
         "智能托管消耗", "全站推广消耗", "全站推广成交金额", "全站推广点击",
@@ -305,20 +314,20 @@ def build_latest(products: pd.DataFrame, hosting: pd.DataFrame) -> pd.DataFrame:
 
     result["商品成本"] = 0.0
     result["单件快递费"] = 0.0
-    result["平台扣点"] = PLATFORM_RATE
-    result["税点"] = TAX_RATE
+    result["平台扣点"] = platform_rate
+    result["税点"] = tax_rate
     result["其他成本"] = 0.0
     result["成本配置状态"] = "待SKU成本整合"
 
     result["货品成本"] = 0.0
     result["快递成本"] = 0.0
-    result["平台费用"] = result["支付金额"] * PLATFORM_RATE
-    result["税费"] = result["支付金额"] * TAX_RATE
+    result["平台费用"] = result["支付金额"] * platform_rate
+    result["税费"] = result["支付金额"] * tax_rate
     exempt_mask = result["商品ID"].astype(str).str.strip().isin(MARKETING_EXEMPT_PRODUCT_IDS)
     result["预估营销托管费用"] = np.where(
         exempt_mask,
         0.0,
-        result["支付金额"] * MARKETING_ESTIMATE_RATE,
+        result["支付金额"] * marketing_rate,
     )
     result["销售毛利"] = result["支付金额"] - result["平台费用"] - result["税费"]
     result["实时盈亏"] = (
@@ -383,7 +392,7 @@ async def async_main() -> dict:
     print(f"成本表新增SKU：{added}，已有SKU：{updated}")
     print(f"支付金额：RMB {total_sales:.2f}")
     print(f"投流托管费用：RMB {total_ad:.2f}")
-    print(f"预估营销托管费用(5%)：RMB {total_est:.2f}")
+    print(f"预估营销托管费用：RMB {total_est:.2f}")
 
     return {
         "success": True,
