@@ -746,12 +746,61 @@ def fetch_product_promotions(
     return pd.DataFrame(rows)
 
 
+def is_canceled_order(obj: dict[str, Any]) -> bool:
+    status_keys = (
+        "order_status",
+        "order_status_desc",
+        "order_status_text",
+        "status",
+        "status_desc",
+        "status_text",
+        "orderStatus",
+        "orderStatusDesc",
+        "shop_order_status",
+        "shop_order_status_desc",
+        "shop_order_status_text",
+    )
+    text_tokens: list[str] = []
+    for key in status_keys:
+        value = obj.get(key)
+        if value is not None:
+            text_tokens.append(text(value).strip().lower())
+
+    status_tag = obj.get("order_status_tag") or obj.get("status_tag") or {}
+    if isinstance(status_tag, dict):
+        for key in ("text", "label", "desc", "name"):
+            value = status_tag.get(key)
+            if value is not None:
+                text_tokens.append(text(value).strip().lower())
+
+    joined = " ".join(token for token in text_tokens if token)
+    if not joined:
+        return False
+    cancel_markers = (
+        "cancel",
+        "cancelled",
+        "canceled",
+        "closed",
+        "\u53d6\u6d88",
+        "\u5df2\u5173\u95ed",
+        "\u4ea4\u6613\u5173\u95ed",
+    )
+    return any(marker in joined for marker in cancel_markers)
+
+
 def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
     rows = []
+    skipped_canceled = 0
     for order in orders:
+        if is_canceled_order(order):
+            skipped_canceled += 1
+            continue
         shop_order_id = text(order.get("shop_order_id"))
         pay_time = order.get("pay_time") or order.get("create_time")
         for item in order.get("product_item") or []:
+            if is_canceled_order(item):
+                skipped_canceled += 1
+                continue
             qty = num(item.get("combo_num"))
             merchant_income, user_pay, platform_subsidy, income_source = (
                 merchant_income_from_item(item, qty)
@@ -776,6 +825,8 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
                     "单价": cents(item.get("combo_amount")),
                 }
             )
+    if skipped_canceled:
+        print(f"Douyin skipped canceled/closed orders: {skipped_canceled}")
     return pd.DataFrame(rows)
 
 

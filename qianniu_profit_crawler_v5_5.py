@@ -2144,8 +2144,6 @@ def write_realtime_snapshot(df):
     }
     for shop in load_enabled_shops():
         name = shop_name(shop)
-        if not name or name in seen_stores:
-            continue
         summary_file = DATA_ROOT / safe_filename(name) / "latest_summary.json"
         summary = {}
         if summary_file.exists():
@@ -2153,9 +2151,26 @@ def write_realtime_snapshot(df):
                 summary = json.loads(summary_file.read_text(encoding="utf-8"))
             except Exception:
                 summary = {}
+
+        store_ad_cost = float(summary.get("store_ad_cost", 0) or 0)
+        if name and store_ad_cost > 0:
+            current = store_adjustments.get(
+                name,
+                {
+                    "store": name,
+                    "store_level_ad_cost": 0.0,
+                }
+            )
+            current["store_level_ad_cost"] = max(
+                float(current.get("store_level_ad_cost", 0.0)),
+                store_ad_cost,
+            )
+            store_adjustments[name] = current
+
+        if not name or name in seen_stores:
+            continue
         captured_at = str(summary.get("generated_at") or generated_at)
         date_text = str(summary.get("order_day") or captured_at[:10])
-        store_ad_cost = float(summary.get("store_ad_cost", 0) or 0)
         overall_profit = float(summary.get("overall_profit", 0) or 0)
         records.append(
             {
