@@ -2602,9 +2602,19 @@ class RefundPager:
                 )
 
                 if not today_ok:
-                    raise RuntimeError(
-                        "最终查询日期不是今天"
+                    print(
+                        "最终查询日期不是今天，重新设置今天后重试..."
                     )
+
+                    await set_today_date(
+                        self.scope
+                    )
+
+                    await self.page.wait_for_timeout(
+                        500
+                    )
+
+                    continue
 
                 if status_ok:
                     print(
