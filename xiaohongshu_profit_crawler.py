@@ -399,7 +399,33 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
         package_id = text(package.get("packageId"))
         order_id = text(package.get("orderId") or package.get("order_id") or package_id)
         paid_at = text(package.get("paidAt") or package.get("orderedAt") or package.get("createdAt"))
-        for sku in package.get("skus") or []:
+        package_seller_receive = num(package.get("actualSellerReceiveAmount"))
+        package_skus = package.get("skus") or []
+        line_basis_values: list[float] = []
+
+        for sku in package_skus:
+            scskus = sku.get("scskus") or []
+            if not scskus:
+                line_basis_values.append(
+                    num(sku.get("skuTotalPaidAmount") or sku.get("paidAmount"))
+                    + num(sku.get("skuTotalRedDiscount") or sku.get("redDiscountAmount"))
+                )
+                continue
+
+            for sc in scskus:
+                line_basis_values.append(
+                    (
+                        num(sc.get("paidAmount"))
+                        + num(sc.get("redDiscount"))
+                        + num(sc.get("allowance"))
+                    )
+                    * num(sc.get("quantity"), 1.0)
+                )
+
+        package_basis_sum = sum(line_basis_values)
+        line_index = 0
+
+        for sku in package_skus:
             product_id = text(sku.get("itemId"))
             product_name = text(sku.get("displayName") or sku.get("skuName"))
             sku_spec = text(sku.get("skuSpecification"))
@@ -407,6 +433,13 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
             sku_paid = num(sku.get("skuTotalPaidAmount") or sku.get("paidAmount"))
             scskus = sku.get("scskus") or []
             if not scskus:
+                line_basis = line_basis_values[line_index] if line_index < len(line_basis_values) else sku_paid
+                line_index += 1
+                paid = (
+                    package_seller_receive * line_basis / package_basis_sum
+                    if package_seller_receive > 0 and package_basis_sum > 0
+                    else sku_paid
+                )
                 rows.append(
                     {
                         "店铺": SHOP_NAME,
@@ -418,7 +451,7 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
                         "商品名称": product_name,
                         "商家编码": text(sku.get("scskuCode") or sku.get("skuId")),
                         "SKU规格": sku_spec,
-                        "支付金额": sku_paid,
+                        "支付金额": paid,
                         "SKU订单数": 1,
                         "SKU成交件数": sku_quantity,
                         "单价": num(sku.get("skuSoldPrice") or sku.get("skuRawPrice")),
@@ -433,7 +466,13 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
             sc_qty_sum = sum(num(sc.get("quantity")) for sc in scskus) or sku_quantity
             for sc in scskus:
                 qty = num(sc.get("quantity"), 1.0)
-                paid = num(sc.get("paidAmount")) * qty
+                line_basis = line_basis_values[line_index] if line_index < len(line_basis_values) else 0.0
+                line_index += 1
+                paid = (
+                    package_seller_receive * line_basis / package_basis_sum
+                    if package_seller_receive > 0 and package_basis_sum > 0
+                    else num(sc.get("paidAmount")) * qty
+                )
                 if paid <= 0 and sc_paid_sum:
                     paid = sku_paid * qty / sc_qty_sum
                 rows.append(
