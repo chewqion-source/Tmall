@@ -75,7 +75,8 @@ function Invoke-PythonStepWithRetry {
             }
 
             if ($null -eq $code) {
-                $code = 0
+                $code = 1
+                Write-RunLog "[$Label] process exited but no exit code was reported; treating as failure"
             }
         }
         catch {
