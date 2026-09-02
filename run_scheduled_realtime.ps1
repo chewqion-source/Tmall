@@ -41,14 +41,39 @@ function Invoke-PythonStepWithRetry {
         $stdoutFile = Join-Path $LogDir ("{0}_{1}_{2}.out.log" -f $safeLabel, $stamp, $attempt)
         $stderrFile = Join-Path $LogDir ("{0}_{1}_{2}.err.log" -f $safeLabel, $stamp, $attempt)
         try {
-            $process = Start-Process `
-                -FilePath $Python `
-                -ArgumentList $Arguments `
-                -WorkingDirectory $BaseDir `
-                -RedirectStandardOutput $stdoutFile `
-                -RedirectStandardError $stderrFile `
-                -NoNewWindow `
-                -PassThru
+            Set-Content -Path $stdoutFile -Value "" -Encoding UTF8
+            Set-Content -Path $stderrFile -Value "" -Encoding UTF8
+
+            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $startInfo.FileName = $Python
+            $startInfo.Arguments = (($Arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " ")
+            $startInfo.WorkingDirectory = $BaseDir
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            $startInfo.CreateNoWindow = $true
+
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $startInfo
+            $stdoutPath = $stdoutFile
+            $stderrPath = $stderrFile
+            $stdoutHandler = [System.Diagnostics.DataReceivedEventHandler]{
+                param($sender, $eventArgs)
+                if ($null -ne $eventArgs.Data) {
+                    [System.IO.File]::AppendAllText($stdoutPath, $eventArgs.Data + [Environment]::NewLine, [System.Text.Encoding]::UTF8)
+                }
+            }
+            $stderrHandler = [System.Diagnostics.DataReceivedEventHandler]{
+                param($sender, $eventArgs)
+                if ($null -ne $eventArgs.Data) {
+                    [System.IO.File]::AppendAllText($stderrPath, $eventArgs.Data + [Environment]::NewLine, [System.Text.Encoding]::UTF8)
+                }
+            }
+            $process.add_OutputDataReceived($stdoutHandler)
+            $process.add_ErrorDataReceived($stderrHandler)
+            [void]$process.Start()
+            $process.BeginOutputReadLine()
+            $process.BeginErrorReadLine()
 
             if ($TimeoutSeconds -gt 0) {
                 $finished = $process.WaitForExit($TimeoutSeconds * 1000)
@@ -64,6 +89,7 @@ function Invoke-PythonStepWithRetry {
                     $code = 124
                 }
                 else {
+                    $process.WaitForExit()
                     $process.Refresh()
                     $code = $process.ExitCode
                 }
@@ -75,8 +101,25 @@ function Invoke-PythonStepWithRetry {
             }
 
             if ($null -eq $code) {
-                $code = 1
-                Write-RunLog "[$Label] process exited but no exit code was reported; treating as failure"
+                Start-Sleep -Milliseconds 300
+                $process.Refresh()
+                $code = $process.ExitCode
+            }
+
+            if ($null -eq $code) {
+                $combinedLog = ""
+                foreach ($stepLog in @($stdoutFile, $stderrFile)) {
+                    if (Test-Path $stepLog) {
+                        $combinedLog += [System.IO.File]::ReadAllText($stepLog)
+                    }
+                }
+                if ($combinedLog -match "Traceback|程序异常|RuntimeError|failed|失败|错误|Error") {
+                    $code = 1
+                }
+                else {
+                    $code = 0
+                }
+                Write-RunLog "[$Label] process exited but no exit code was reported; inferred exit code: $code"
             }
         }
         catch {
