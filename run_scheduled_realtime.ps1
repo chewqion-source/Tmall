@@ -41,39 +41,14 @@ function Invoke-PythonStepWithRetry {
         $stdoutFile = Join-Path $LogDir ("{0}_{1}_{2}.out.log" -f $safeLabel, $stamp, $attempt)
         $stderrFile = Join-Path $LogDir ("{0}_{1}_{2}.err.log" -f $safeLabel, $stamp, $attempt)
         try {
-            Set-Content -Path $stdoutFile -Value "" -Encoding UTF8
-            Set-Content -Path $stderrFile -Value "" -Encoding UTF8
-
-            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $startInfo.FileName = $Python
-            $startInfo.Arguments = (($Arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " ")
-            $startInfo.WorkingDirectory = $BaseDir
-            $startInfo.UseShellExecute = $false
-            $startInfo.RedirectStandardOutput = $true
-            $startInfo.RedirectStandardError = $true
-            $startInfo.CreateNoWindow = $true
-
-            $process = New-Object System.Diagnostics.Process
-            $process.StartInfo = $startInfo
-            $stdoutPath = $stdoutFile
-            $stderrPath = $stderrFile
-            $stdoutHandler = [System.Diagnostics.DataReceivedEventHandler]{
-                param($sender, $eventArgs)
-                if ($null -ne $eventArgs.Data) {
-                    [System.IO.File]::AppendAllText($stdoutPath, $eventArgs.Data + [Environment]::NewLine, [System.Text.Encoding]::UTF8)
-                }
-            }
-            $stderrHandler = [System.Diagnostics.DataReceivedEventHandler]{
-                param($sender, $eventArgs)
-                if ($null -ne $eventArgs.Data) {
-                    [System.IO.File]::AppendAllText($stderrPath, $eventArgs.Data + [Environment]::NewLine, [System.Text.Encoding]::UTF8)
-                }
-            }
-            $process.add_OutputDataReceived($stdoutHandler)
-            $process.add_ErrorDataReceived($stderrHandler)
-            [void]$process.Start()
-            $process.BeginOutputReadLine()
-            $process.BeginErrorReadLine()
+            $process = Start-Process `
+                -FilePath $Python `
+                -ArgumentList $Arguments `
+                -WorkingDirectory $BaseDir `
+                -RedirectStandardOutput $stdoutFile `
+                -RedirectStandardError $stderrFile `
+                -NoNewWindow `
+                -PassThru
 
             if ($TimeoutSeconds -gt 0) {
                 $finished = $process.WaitForExit($TimeoutSeconds * 1000)
@@ -89,7 +64,6 @@ function Invoke-PythonStepWithRetry {
                     $code = 124
                 }
                 else {
-                    $process.WaitForExit()
                     $process.Refresh()
                     $code = $process.ExitCode
                 }
