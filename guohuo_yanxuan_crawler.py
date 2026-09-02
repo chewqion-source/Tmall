@@ -49,6 +49,7 @@ PAGE_TIMEOUT = 60000
 PRODUCT_URL = "https://tgc.tmall.com/ds/page/supplier/product-data?from=menu"
 HOSTING_URL = "https://tgc.tmall.com/ds/page/supplier/commercial-hosting-home"
 ORDER_URL = "https://tgc.tmall.com/ds/page/supplier/order-manage"
+API_ORIGIN = "https://tgc.tmall.com"
 
 
 def _num(value, default=0.0):
@@ -83,6 +84,7 @@ def _shop_dir() -> Path:
 
 
 async def _fetch_json(page, url: str, body: dict | None = None, method: str = "POST"):
+    request_url = f"{API_ORIGIN}{url}" if url.startswith("/") else url
     script = """
     async ({url, body, method}) => {
       const options = {
@@ -98,14 +100,14 @@ async def _fetch_json(page, url: str, body: dict | None = None, method: str = "P
       return {ok: resp.ok, status: resp.status, data, text};
     }
     """
-    result = await page.evaluate(script, {"url": url, "body": body, "method": method})
+    result = await page.evaluate(script, {"url": request_url, "body": body, "method": method})
     if not result.get("ok"):
-        raise RuntimeError(f"接口失败 {url}: HTTP {result.get('status')}")
+        raise RuntimeError(f"接口失败 {request_url}: HTTP {result.get('status')}")
     data = result.get("data")
     if not isinstance(data, dict):
-        raise RuntimeError(f"接口返回不是 JSON：{url}")
+        raise RuntimeError(f"接口返回不是 JSON：{request_url}")
     if data.get("success") is False:
-        raise RuntimeError(f"接口返回失败 {url}: {data.get('errorMessage') or data.get('errorCode')}")
+        raise RuntimeError(f"接口返回失败 {request_url}: {data.get('errorMessage') or data.get('errorCode')}")
     return data
 
 

@@ -761,6 +761,11 @@ def integrate_external_platform_shop(shop, default_shop_name, platform_label):
         except Exception:
             pass
 
+    if not is_today_frame(df, summary):
+        capture_day = _frame_capture_day(df, summary) or "未知"
+        print(f"⚠ [{shop_display_name}] latest.csv 不是今天数据（{capture_day}），跳过本轮整合")
+        return None
+
     df["店铺"] = shop_display_name
     df["抓取时间"] = generated_at
     df["商品货号"] = df.get("商家编码", "")
@@ -1241,6 +1246,11 @@ def integrate_shop(
         },
         encoding="utf-8-sig"
     )
+
+    if not is_today_frame(df):
+        capture_day = _frame_capture_day(df) or "未知"
+        print(f"⚠ [{shop['name']}] latest.csv 不是今天数据（{capture_day}），跳过本轮整合")
+        return None
 
     if "商品ID" not in df.columns:
 
@@ -2020,6 +2030,32 @@ def _snapshot_ratio(numerator, denominator):
         return None
 
 
+def current_day_text():
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _frame_capture_day(df, summary=None):
+    candidates = []
+    if isinstance(summary, dict):
+        candidates.extend(
+            [
+                summary.get("generated_at"),
+                summary.get("order_day"),
+            ]
+        )
+    if "抓取时间" in df.columns and not df.empty:
+        candidates.extend(df["抓取时间"].dropna().astype(str).head(3).tolist())
+    for value in candidates:
+        text = str(value or "").strip()
+        if len(text) >= 10:
+            return text[:10]
+    return ""
+
+
+def is_today_frame(df, summary=None):
+    return _frame_capture_day(df, summary) == current_day_text()
+
+
 def write_realtime_snapshot(df):
     snapshot_dir = (
         DATA_ROOT
@@ -2351,6 +2387,7 @@ def integrate_all_shops():
 
     success = 0
     failed = 0
+    skipped = 0
 
     for shop in shops:
 
@@ -2372,8 +2409,9 @@ def integrate_all_shops():
                 frames.append(
                     df
                 )
-
-            success += 1
+                success += 1
+            else:
+                skipped += 1
 
         except Exception as e:
 
@@ -2404,6 +2442,10 @@ def integrate_all_shops():
     print(
         f"整合失败：{failed} 家"
     )
+    if skipped:
+        print(
+            f"跳过旧数据：{skipped} 家"
+        )
 
     if combined is not None:
 
