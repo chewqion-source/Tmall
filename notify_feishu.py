@@ -62,6 +62,13 @@ def _snapshot_summary() -> dict[str, object]:
         raise FileNotFoundError(f"实时快照不存在：{SNAPSHOT_FILE}")
 
     payload = json.loads(SNAPSHOT_FILE.read_text(encoding="utf-8"))
+    generated_at = str(payload.get("generated_at", "")).strip()
+    today = datetime.now().strftime("%Y-%m-%d")
+    if not generated_at:
+        raise RuntimeError("实时快照缺少 generated_at，停止发送飞书。")
+    if not generated_at.startswith(today):
+        raise RuntimeError(f"实时快照不是今天的数据：generated_at={generated_at}，today={today}，停止发送飞书。")
+
     records = payload.get("records", [])
     if not records:
         raise RuntimeError("实时快照没有 records")

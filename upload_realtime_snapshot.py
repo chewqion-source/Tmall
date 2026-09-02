@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
+from datetime import datetime
 import json
 import logging
 import sys
@@ -18,6 +19,16 @@ SSH_KEY_FILE = BASE_DIR / ".ssh_tmp" / "tmall_codex_temp_ed25519"
 REMOTE_HOST = "150.158.133.102"
 REMOTE_USER = "ubuntu"
 REMOTE_FILE = "/opt/tmall-dashboard/data/realtime/latest.json"
+
+
+def validate_today_snapshot(payload: dict) -> tuple[bool, str]:
+    generated_at = str(payload.get("generated_at", "")).strip()
+    today = datetime.now().strftime("%Y-%m-%d")
+    if not generated_at:
+        return False, "实时快照缺少 generated_at，停止上传。"
+    if not generated_at.startswith(today):
+        return False, f"实时快照不是今天的数据：generated_at={generated_at}，today={today}，停止上传。"
+    return True, ""
 
 
 def connect_with_retry(max_attempts: int = 5):
@@ -56,6 +67,10 @@ def main() -> int:
     payload = json.loads(SNAPSHOT_FILE.read_text(encoding="utf-8"))
     records = payload.get("records", [])
     generated_at = payload.get("generated_at", "")
+    ok, reason = validate_today_snapshot(payload)
+    if not ok:
+        print(reason)
+        return 1
     if not records:
         print("实时快照没有 records，停止上传。")
         return 1
