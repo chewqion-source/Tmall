@@ -15,6 +15,7 @@ $UploadScript = Join-Path $BaseDir "upload_realtime_snapshot.py"
 $SyncSkuScript = Join-Path $BaseDir "sync_sku_cost.py"
 $FeishuScript = Join-Path $BaseDir "notify_feishu.py"
 $LoginCheckScript = Join-Path $BaseDir "check_login_status.py"
+$SnapshotFile = Join-Path $BaseDir "data\realtime_snapshot\latest.json"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $LogFile = Join-Path $LogDir ("realtime_" + (Get-Date -Format "yyyyMMdd") + ".log")
@@ -135,6 +136,27 @@ function Invoke-PythonStepWithRetry {
     return $finalCode
 }
 
+function Test-FreshTodaySnapshot {
+    param([datetime]$RunStartedAt)
+    if (-not (Test-Path $SnapshotFile)) {
+        return $false
+    }
+    try {
+        $payload = Get-Content -Path $SnapshotFile -Encoding UTF8 -Raw | ConvertFrom-Json
+        $generatedAtText = [string]$payload.generated_at
+        if (-not $generatedAtText.StartsWith((Get-Date -Format "yyyy-MM-dd"))) {
+            return $false
+        }
+        $generatedAt = [datetime]::ParseExact($generatedAtText, "yyyy-MM-dd HH:mm:ss", $null)
+        $records = @($payload.records)
+        return ($generatedAt -ge $RunStartedAt.AddMinutes(-1) -and $records.Count -gt 0)
+    }
+    catch {
+        Write-RunLog "fresh snapshot check failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 $lockStream = $null
 try {
     $lockStream = [System.IO.File]::Open($LockFile, "OpenOrCreate", "ReadWrite", "None")
@@ -145,7 +167,8 @@ try {
 
     Set-Location $BaseDir
 
-    Write-RunLog "========== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') scheduled run started =========="
+    $runStartedAt = Get-Date
+    Write-RunLog "========== $($runStartedAt.ToString('yyyy-MM-dd HH:mm:ss')) scheduled run started =========="
 
     $loginCheckCode = Invoke-PythonStepWithRetry -Label "login check" -Arguments @($LoginCheckScript) -MaxAttempts 1 -TimeoutSeconds 120
     if ($loginCheckCode -eq 20) {
@@ -166,8 +189,13 @@ try {
 
     $runCode = Invoke-PythonStepWithRetry -Label "crawler" -Arguments @($RunScript) -MaxAttempts 2 -TimeoutSeconds 1800
     if ($runCode -ne 0) {
-        Write-RunLog "crawler failed, exit code: $runCode"
-        exit $runCode
+        if (Test-FreshTodaySnapshot -RunStartedAt $runStartedAt) {
+            Write-RunLog "crawler returned exit code $runCode, but a fresh today snapshot exists; continuing upload and Feishu notification"
+        }
+        else {
+            Write-RunLog "crawler failed, exit code: $runCode"
+            exit $runCode
+        }
     }
 
     $syncPushCode = Invoke-PythonStepWithRetry -Label "sync sku cost push" -Arguments @($SyncSkuScript, "push") -TimeoutSeconds 180
