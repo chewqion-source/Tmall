@@ -196,6 +196,8 @@ def restart_chrome_for_shop(shop: dict[str, object]) -> bool:
                 cwd=str(BASE_DIR),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=15,
             )
             time.sleep(4)

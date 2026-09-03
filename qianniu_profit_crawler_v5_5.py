@@ -320,6 +320,8 @@ def close_shop_browser(shop, reason=""):
                 ["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
         except Exception:
@@ -709,10 +711,20 @@ def run_xiaohongshu_crawler():
             result = subprocess.run(
                 command,
                 cwd=str(BASE_DIR),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
                 timeout=480,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"{name} 小红书抓取超过 8 分钟，已强制跳过") from exc
+        output = (result.stdout or "").strip()
+        error = (result.stderr or "").strip()
+        if output:
+            print(output)
+        if error:
+            print(error)
         if result.returncode != 0:
             raise RuntimeError(f"{name} 抓取未成功，退出码 {result.returncode}")
 
