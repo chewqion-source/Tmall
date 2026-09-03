@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from encoding_guard import enable_utf8_stdio
+
+enable_utf8_stdio()
+
 from datetime import datetime, timedelta
 from pathlib import Path
 import json

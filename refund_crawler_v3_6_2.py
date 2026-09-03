@@ -17,6 +17,10 @@
 3. 页面筛选完全通过浏览器 UI 操作，让千牛自己生成合法请求。
 """
 
+from encoding_guard import enable_utf8_stdio
+
+enable_utf8_stdio()
+
 import asyncio
 import csv
 import json

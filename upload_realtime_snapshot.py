@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+from encoding_guard import enable_utf8_stdio
+
+enable_utf8_stdio()
+
 from pathlib import Path
 from datetime import datetime
 import json

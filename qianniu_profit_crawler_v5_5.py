@@ -34,6 +34,10 @@
 - 如果某商品 SKU 成本仍存在未匹配行，不会用不完整成本覆盖原成本。
 """
 
+from encoding_guard import enable_utf8_stdio
+
+enable_utf8_stdio()
+
 from pathlib import Path
 from datetime import datetime
 import asyncio

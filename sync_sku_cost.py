@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+from encoding_guard import enable_utf8_stdio
+
+enable_utf8_stdio()
+
 from datetime import datetime
 from pathlib import Path
 import logging

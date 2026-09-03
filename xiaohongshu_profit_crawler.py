@@ -11,6 +11,10 @@ Rules for 盲盒千帆:
 
 from __future__ import annotations
 
+from encoding_guard import enable_utf8_stdio
+
+enable_utf8_stdio()
+
 import argparse
 import json
 import math

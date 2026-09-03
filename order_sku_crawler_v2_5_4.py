@@ -8,6 +8,10 @@ V2.5.2 核心变化：
 - 自动点击“下一页”，捕获真实 Response
 """
 
+from encoding_guard import enable_utf8_stdio
+
+enable_utf8_stdio()
+
 import asyncio
 import csv
 import json

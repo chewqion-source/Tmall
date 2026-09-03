@@ -1,3 +1,7 @@
+from encoding_guard import enable_utf8_stdio
+
+enable_utf8_stdio()
+
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
