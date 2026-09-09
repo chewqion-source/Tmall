@@ -3,7 +3,7 @@ chcp 65001 >nul
 title 千牛四店铺抓取浏览器
 
 set "CHROME=C:\Program Files\Google\Chrome\Application\chrome.exe"
-set "ROOT=C:\Users\Administrator\Desktop\qianniu_profit_crawler\chrome_profiles"
+set "ROOT=%~dp0chrome_profiles"
 
 echo ==================================================
 echo          启动千牛四店铺抓取专用 Chrome
