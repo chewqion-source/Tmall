@@ -2327,29 +2327,35 @@ def get_cdp_websocket_url(port):
     从 Chrome /json/version 读取 browser websocket 地址。
     Playwright 用 http://port 连接超时时，可直接连接这个 ws 地址。
     """
-    url = f"http://127.0.0.1:{port}/json/version"
+    urls = [
+        f"http://127.0.0.1:{port}/json/version",
+        f"http://localhost:{port}/json/version",
+    ]
 
-    try:
-        with urllib.request.urlopen(
-            url,
-            timeout=5
-        ) as resp:
-            data = json.loads(
-                resp.read().decode(
-                    "utf-8",
-                    errors="ignore"
+    for url in urls:
+        try:
+            with urllib.request.urlopen(
+                url,
+                timeout=5
+            ) as resp:
+                data = json.loads(
+                    resp.read().decode(
+                        "utf-8",
+                        errors="ignore"
+                    )
                 )
-            )
 
-        return str(
-            data.get(
-                "webSocketDebuggerUrl",
-                ""
-            )
-        ).strip()
+            return str(
+                data.get(
+                    "webSocketDebuggerUrl",
+                    ""
+                )
+            ).strip()
 
-    except Exception:
-        return ""
+        except Exception:
+            continue
+
+    return ""
 
 
 async def connect_cdp_robust(pw, port):
@@ -2363,7 +2369,10 @@ async def connect_cdp_robust(pw, port):
       2. 读取 /json/version 后直接 ws，20秒
       3. 再重试一次 http，25秒
     """
-    endpoint = f"http://127.0.0.1:{port}"
+    endpoints = [
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+    ]
     errors = []
 
     for attempt in range(1, 4):
@@ -2383,16 +2392,32 @@ async def connect_cdp_robust(pw, port):
                         timeout=20000
                     )
                 else:
-                    browser = await pw.chromium.connect_over_cdp(
-                        endpoint,
-                        timeout=20000
-                    )
+                    last_error = None
+                    for endpoint in endpoints:
+                        try:
+                            browser = await pw.chromium.connect_over_cdp(
+                                endpoint,
+                                timeout=20000
+                            )
+                            break
+                        except Exception as exc:
+                            last_error = exc
+                    else:
+                        raise last_error
 
             else:
-                browser = await pw.chromium.connect_over_cdp(
-                    endpoint,
-                    timeout=25000 if attempt == 3 else 20000
-                )
+                last_error = None
+                for endpoint in endpoints:
+                    try:
+                        browser = await pw.chromium.connect_over_cdp(
+                            endpoint,
+                            timeout=25000 if attempt == 3 else 20000
+                        )
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                else:
+                    raise last_error
 
             print("✓ Chrome CDP连接成功")
             return browser

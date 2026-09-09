@@ -359,14 +359,24 @@ def check_shop(pw, shop: dict[str, object]) -> dict[str, str]:
         "url": "",
     }
 
-    try:
-        browser = pw.chromium.connect_over_cdp(
-            f"http://127.0.0.1:{port}",
-            timeout=20_000,
-        )
-    except Exception as exc:
+    browser = None
+    errors = []
+    for endpoint in (
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+    ):
+        try:
+            browser = pw.chromium.connect_over_cdp(
+                endpoint,
+                timeout=20_000,
+            )
+            break
+        except Exception as exc:
+            errors.append(f"{endpoint}: {exc}")
+
+    if browser is None:
         result["status"] = "bad"
-        result["reason"] = f"浏览器调试端口无法连接：{exc}"
+        result["reason"] = "浏览器调试端口无法连接：" + " | ".join(errors)
         return result
 
     try:

@@ -3980,8 +3980,13 @@ def run_shop(
         f"开始抓取：{name}"
     )
 
+    cdp_endpoints = [
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+    ]
+
     print(
-        f"CDP：127.0.0.1:{port}"
+        f"CDP：{cdp_endpoints[0]} / {cdp_endpoints[1]}"
     )
 
     print(
@@ -3990,13 +3995,29 @@ def run_shop(
 
     try:
 
-        browser = (
-            playwright
-            .chromium
-            .connect_over_cdp(
-                f"http://127.0.0.1:{port}"
+        errors = []
+        browser = None
+        for endpoint in cdp_endpoints:
+            try:
+                browser = (
+                    playwright
+                    .chromium
+                    .connect_over_cdp(
+                        endpoint
+                    )
+                )
+                print(
+                    f"✓ CDP连接成功：{endpoint}"
+                )
+                break
+            except Exception as exc:
+                errors.append(
+                    f"{endpoint}: {exc}"
+                )
+        if browser is None:
+            raise RuntimeError(
+                " | ".join(errors)
             )
-        )
 
     except Exception as e:
 

@@ -3034,11 +3034,27 @@ async def crawl_shop(
     )
     print("=" * 72)
 
-    browser = (
-        await pw.chromium.connect_over_cdp(
-            f"http://127.0.0.1:{port}"
+    browser = None
+    cdp_errors = []
+    for endpoint in (
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+    ):
+        try:
+            browser = (
+                await pw.chromium.connect_over_cdp(
+                    endpoint
+                )
+            )
+            print(f"✓ CDP连接成功：{endpoint}")
+            break
+        except Exception as exc:
+            cdp_errors.append(f"{endpoint}: {exc}")
+
+    if browser is None:
+        raise RuntimeError(
+            "无法连接退款浏览器CDP：" + " | ".join(cdp_errors)
         )
-    )
 
     if not browser.contexts:
 

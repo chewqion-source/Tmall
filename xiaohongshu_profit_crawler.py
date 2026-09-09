@@ -399,9 +399,24 @@ def fetch_promotions(page: CdpPage, day: str, page_size: int = 50, max_pages: in
     return df, account_spend, account_balance
 
 
+def is_sample_package(package: dict[str, Any]) -> bool:
+    tag_codes = {text(tag).upper() for tag in (package.get("orderTagList") or [])}
+    if "SAMPLE" in tag_codes:
+        return True
+
+    for tag in package.get("orderTagInfoList") or []:
+        code = text(tag.get("code")).upper()
+        name = text(tag.get("name") or tag.get("hover") or tag.get("hoverWithHyperLink"))
+        if code == "SAMPLE" or "拿样" in name or "样品" in name:
+            return True
+    return False
+
+
 def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for package in orders:
+        if is_sample_package(package):
+            continue
         if text(package.get("status")) == "998" or "取消" in text(package.get("statusDesc")):
             continue
 
