@@ -187,6 +187,47 @@ async def fetch_hosting(page) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _parse_balance_from_text(raw_text: str) -> float | None:
+    compact = " ".join(str(raw_text or "").split())
+    patterns = [
+        r"(?:可用余额|账户总余额|总余额|推广余额)[^0-9-]{0,30}(-?\d+(?:,\d{3})*(?:\.\d+)?)",
+        r"(-?\d+(?:,\d{3})*(?:\.\d+)?)[^0-9]{0,10}(?:可用余额|账户总余额|总余额|推广余额)",
+    ]
+    for pattern in patterns:
+        import re
+
+        match = re.search(pattern, compact)
+        if not match:
+            continue
+        value = _num(match.group(1))
+        if value >= 0:
+            return value
+    return None
+
+
+async def fetch_promotion_balance(page) -> float | None:
+    await page.goto(HOSTING_URL, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT)
+    await page.wait_for_timeout(2500)
+
+    texts = []
+    try:
+        texts.append(await page.evaluate("document.body ? document.body.innerText : ''"))
+    except Exception:
+        pass
+
+    for frame in page.frames:
+        try:
+            texts.append(await frame.evaluate("document.body ? document.body.innerText : ''"))
+        except Exception:
+            pass
+
+    for raw_text in texts:
+        balance = _parse_balance_from_text(raw_text)
+        if balance is not None:
+            return balance
+    return None
+
+
 def _order_time_ms(order: dict) -> int:
     return int(_num(order.get("sourceTradeGmtCreate"), 0))
 
@@ -286,7 +327,7 @@ def write_order_cost_outputs(order_rows: list[dict]) -> tuple[int, int, int]:
     return added, updated, unique_sku
 
 
-def build_latest(products: pd.DataFrame, hosting: pd.DataFrame) -> pd.DataFrame:
+def build_latest(products: pd.DataFrame, hosting: pd.DataFrame, ad_balance: float | None = None) -> pd.DataFrame:
     if products.empty:
         raise RuntimeError("国货严选商品实时数据为空")
 
@@ -340,6 +381,7 @@ def build_latest(products: pd.DataFrame, hosting: pd.DataFrame) -> pd.DataFrame:
     result["利润率"] = np.where(result["支付金额"] > 0, result["实时盈亏"] / result["支付金额"], 0)
     result["盈亏状态"] = np.where(result["实时盈亏"] > 0, "盈利", np.where(result["实时盈亏"] < 0, "亏损", "持平"))
     result["实际净投产"] = np.where(result["总推广消耗"] > 0, result["支付金额"] / result["总推广消耗"], 0)
+    result["账户推广余额"] = ad_balance
 
     result.insert(0, "店铺", SHOP_NAME)
     result.insert(1, "抓取时间", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -375,11 +417,12 @@ async def async_main() -> dict:
             products = await fetch_products(page)
             hosting = await fetch_hosting(page)
             order_rows = await fetch_today_order_skus(page)
+            ad_balance = await fetch_promotion_balance(page)
         finally:
             await page.close()
 
     added, updated, unique_sku = write_order_cost_outputs(order_rows)
-    latest = build_latest(products, hosting)
+    latest = build_latest(products, hosting, ad_balance)
     save_latest(latest)
 
     total_sales = float(latest["支付金额"].sum())
@@ -395,6 +438,8 @@ async def async_main() -> dict:
     print(f"支付金额：RMB {total_sales:.2f}")
     print(f"投流托管费用：RMB {total_ad:.2f}")
     print(f"预估营销托管费用：RMB {total_est:.2f}")
+    if ad_balance is not None:
+        print(f"账户推广余额：RMB {ad_balance:.2f}")
 
     return {
         "success": True,
@@ -404,6 +449,7 @@ async def async_main() -> dict:
         "unique_sku": unique_sku,
         "added_sku": added,
         "updated_sku": updated,
+        "ad_balance": ad_balance,
     }
 
 

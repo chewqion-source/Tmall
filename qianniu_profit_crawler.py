@@ -284,6 +284,49 @@ def _choose_balance(candidates):
     return float(valid[0][2])
 
 
+def _parse_balance_from_text(raw_text):
+    compact = re.sub(r"\s+", " ", str(raw_text or ""))
+    patterns = [
+        r"(?:账户总余额|总余额)[^0-9-]{0,30}(-?\d+(?:,\d{3})*(?:\.\d+)?)",
+        r"(-?\d+(?:,\d{3})*(?:\.\d+)?)[^0-9]{0,10}(?:账户总余额|总余额)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, compact)
+        if not match:
+            continue
+        try:
+            value = float(match.group(1).replace(",", ""))
+        except Exception:
+            continue
+        if value >= 0:
+            return value
+    return None
+
+
+def _capture_balance_from_page_text(page):
+    texts = []
+    try:
+        texts.append(
+            page.evaluate("document.body ? document.body.innerText : ''")
+        )
+    except Exception:
+        pass
+
+    for frame in getattr(page, "frames", []):
+        try:
+            texts.append(
+                frame.evaluate("document.body ? document.body.innerText : ''")
+            )
+        except Exception:
+            pass
+
+    for raw_text in texts:
+        balance = _parse_balance_from_text(raw_text)
+        if balance is not None:
+            return balance
+    return None
+
+
 def capture_account_balance(page, shop_name, urls):
     captured = {
         "balance": None,
@@ -317,6 +360,11 @@ def capture_account_balance(page, shop_name, urls):
         except Exception:
             pass
         page.wait_for_timeout(5000)
+        if captured["balance"] is None:
+            balance = _capture_balance_from_page_text(page)
+            if balance is not None:
+                captured["balance"] = balance
+                captured["url"] = url
         if captured["balance"] is not None:
             break
 
@@ -468,6 +516,10 @@ def load_shops():
             shop.get("smart_site_url", "")
         ).strip()
 
+        balance_url = str(
+            shop.get("balance_url", "")
+        ).strip()
+
         # 生意参谋是核心数据源，必须有。
         if not sycm_url:
 
@@ -509,6 +561,9 @@ def load_shops():
 
             "smart_site_url":
                 smart_site_url,
+
+            "balance_url":
+                balance_url,
 
         })
 
@@ -4195,6 +4250,7 @@ def run_shop(
             page,
             name,
             [
+                shop.get("balance_url", ""),
                 shop.get("site_url", ""),
                 shop.get("smart_site_url", ""),
                 shop.get("search_url", ""),

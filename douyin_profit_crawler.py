@@ -50,6 +50,7 @@ ORDER_PAGE_URL = "https://fxg.jinritemai.com/ffa/morder/order/list"
 PRODUCT_PROMOTION_URL = "https://compass.jinritemai.com/compass_api/shop/product/product/product_list"
 QIANCHUAN_AAVID = "1841119329577479"
 QIANCHUAN_REALTIME_URL = "https://qianchuan.jinritemai.com/uni-prom/overall"
+QIANCHUAN_BALANCE_URL = "https://qianchuan.jinritemai.com/ad/api/v1/account/home/total-balance"
 SETTLEMENT_ANALYSIS_URL = (
     "https://compass.jinritemai.com/shop/settlement-analysis"
 )
@@ -70,6 +71,15 @@ def cents(value: Any) -> float:
         if value is None or value == "":
             return 0.0
         return float(value) / 100.0
+    except Exception:
+        return 0.0
+
+
+def qianchuan_balance_amount(value: Any) -> float:
+    try:
+        if value is None or value == "":
+            return 0.0
+        return float(value) / 100000.0
     except Exception:
         return 0.0
 
@@ -540,6 +550,43 @@ def parse_qianchuan_overall_text(body_text: str) -> tuple[float, str]:
     return 0.0, updated_at
 
 
+def parse_qianchuan_balance_text(body_text: str) -> float | None:
+    compact = re.sub(r"\s+", " ", text(body_text))
+    patterns = [
+        r"(?:可用余额|账户余额|推广余额|现金余额)[^\d-]{0,20}(-?\d+(?:,\d{3})*(?:\.\d+)?)",
+        r"(-?\d+(?:,\d{3})*(?:\.\d+)?)[^\d]{0,8}(?:可用余额|账户余额|推广余额|现金余额)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, compact)
+        if not match:
+            continue
+        value = parse_money_text(match.group(1))
+        if value >= 0:
+            return value
+    return None
+
+
+def fetch_qianchuan_account_balance(page: CdpPage) -> float | None:
+    try:
+        payload = browser_fetch_json(
+            page,
+            QIANCHUAN_BALANCE_URL,
+            {"aavid": QIANCHUAN_AAVID},
+        )
+    except Exception:
+        return None
+
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    if not isinstance(data, dict):
+        return None
+
+    for key in ("totalBalanceValid", "totalBalance", "totalNonGrantBalance"):
+        value = qianchuan_balance_amount(data.get(key))
+        if value >= 0:
+            return value
+    return None
+
+
 def parse_qianchuan_product_ad_rows(
     body_text: str,
     day: str,
@@ -600,6 +647,9 @@ def fetch_realtime_qianchuan_summary(page: CdpPage, day: str) -> pd.DataFrame:
     )
     body_text = payload.get("body_text", "")
     overall_ad, updated_at = parse_qianchuan_overall_text(body_text)
+    ad_balance = fetch_qianchuan_account_balance(page)
+    if ad_balance is None:
+        ad_balance = parse_qianchuan_balance_text(body_text)
     product_rows = parse_qianchuan_product_ad_rows(body_text, day, updated_at)
     product_ad_total = sum(num(row.get("推商品推广消耗")) for row in product_rows)
     store_ad = max(overall_ad - product_ad_total, 0.0)
@@ -617,9 +667,11 @@ def fetch_realtime_qianchuan_summary(page: CdpPage, day: str) -> pd.DataFrame:
             "推广更新时间": updated_at or datetime.now().strftime("%m-%d %H:%M"),
         }
     )
-    return pd.DataFrame(
+    df = pd.DataFrame(
         rows
     )
+    df.attrs["ad_balance"] = ad_balance
+    return df
 
 
 def settlement_metric_cents(data: dict[str, Any], metric: str) -> float:
@@ -1247,6 +1299,11 @@ def save_outputs(df: pd.DataFrame, refunds_df: pd.DataFrame, promotions_df: pd.D
         "refund_amount": round(float(df["退款金额"].sum()) if not df.empty else 0.0, 2),
         "product_ad_cost": round(float(df.attrs.get("product_ad_cost", 0.0)), 2),
         "store_ad_cost": round(float(df.attrs.get("store_ad_cost", 0.0)), 2),
+        "ad_balance": (
+            round(float(df.attrs["ad_balance"]), 2)
+            if df.attrs.get("ad_balance") is not None
+            else None
+        ),
         "row_profit": round(float(df["实时盈亏"].sum()) if not df.empty else 0.0, 2),
         "overall_profit": round(float(df.attrs.get("overall_profit", 0.0)), 2),
         "promotion_rows": int(len(promotions_df)),
@@ -1298,6 +1355,7 @@ def run(port: int = DEFAULT_PORT, day: str | None = None, promotion_day: str | N
     added, updated, unique_count = ensure_sku_cost_workbook(orders_df, day)
     refunds_df = parse_refunds(refunds)
     result = build_profit(orders_df, refunds_df, promotions_df)
+    result.attrs["ad_balance"] = promotions_df.attrs.get("ad_balance")
     result.attrs["sku_cost_added"] = added
     result.attrs["sku_cost_updated"] = updated
     result.attrs["sku_cost_unique"] = unique_count

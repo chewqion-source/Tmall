@@ -206,6 +206,9 @@ def load_enabled_shops():
             "smart_site_url":
                 item.get("smart_site_url"),
 
+            "balance_url":
+                item.get("balance_url"),
+
             "order_url":
                 item.get("order_url"),
         })

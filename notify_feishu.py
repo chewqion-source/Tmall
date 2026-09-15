@@ -53,11 +53,9 @@ def _money_optional(value: object) -> str:
     try:
         number = float(value)
     except (TypeError, ValueError):
-        return "-"
+        return "未接入"
     if pd.isna(number):
-        return "-"
-    if abs(number) < 0.005:
-        return "-"
+        return "未接入"
     return _money(number)
 
 
@@ -286,6 +284,15 @@ def send_message(webhook: str, secret: str, message: dict[str, object]) -> None:
         if response.status >= 400:
             raise RuntimeError(response_body)
         print(response_body)
+        try:
+            payload = json.loads(response_body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Feishu returned invalid JSON: {response_body}") from exc
+        if int(payload.get("code", payload.get("StatusCode", -1)) or 0) != 0:
+            raise RuntimeError(
+                f"Feishu rejected message: code={payload.get('code', payload.get('StatusCode'))}, "
+                f"msg={payload.get('msg', payload.get('StatusMessage', response_body))}"
+            )
 
 
 def main() -> int:

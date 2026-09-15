@@ -1690,6 +1690,7 @@ def _render_realtime_store_profit(latest_rows: pd.DataFrame) -> None:
         "ad_cost": ("ad_cost", "sum"),
         "refund_amount": ("refund_amount", "sum"),
         "profit": ("profit", "sum"),
+        "ad_balance": ("ad_balance", "max"),
     }
     available_agg = {
         label: agg
@@ -1715,6 +1716,8 @@ def _render_realtime_store_profit(latest_rows: pd.DataFrame) -> None:
         pay_amount = float(row.get("pay_amount", 0.0) or 0.0)
         ad_cost = float(row.get("ad_cost", 0.0) or 0.0)
         refund_amount = float(row.get("refund_amount", 0.0) or 0.0)
+        ad_balance = row.get("ad_balance", None)
+        balance_text = "未接入" if pd.isna(ad_balance) else _format_money(float(ad_balance))
         current_store_rows = store_rows[store_rows["store"].astype(str).eq(str(row["store"]))].copy()
         reason = _store_profit_reason(current_store_rows, profit, pay_amount, ad_cost, refund_amount)
         cards.append(
@@ -1736,6 +1739,10 @@ def _render_realtime_store_profit(latest_rows: pd.DataFrame) -> None:
         <div class="store-profit-meta-row">
             <span class="store-profit-meta-label">退款</span>
             <span class="store-profit-meta-value">{escape(_format_money(refund_amount))}</span>
+        </div>
+        <div class="store-profit-meta-row">
+            <span class="store-profit-meta-label">余额</span>
+            <span class="store-profit-meta-value">{escape(balance_text)}</span>
         </div>
     </div>
     <div class="store-profit-reason" title="{escape(reason)}">{escape(reason)}</div>
