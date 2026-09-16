@@ -223,7 +223,7 @@ def _normalize_product_id(value: object) -> str | None:
     else:
         value = str(value).strip()
     value = value.removesuffix(".0")
-    return value if re.fullmatch(r"\d{6,}", value) else None
+    return value if re.fullmatch(r"[0-9A-Za-z]{6,}", value) else None
 
 
 def _number(value: object) -> float:
