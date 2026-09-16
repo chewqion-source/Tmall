@@ -359,12 +359,14 @@ def capture_account_balance(page, shop_name, urls):
             page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT)
         except Exception:
             pass
-        page.wait_for_timeout(5000)
-        if captured["balance"] is None:
+        deadline = time.time() + 20
+        while captured["balance"] is None and time.time() < deadline:
+            page.wait_for_timeout(1000)
             balance = _capture_balance_from_page_text(page)
             if balance is not None:
                 captured["balance"] = balance
                 captured["url"] = url
+                break
         if captured["balance"] is not None:
             break
 
