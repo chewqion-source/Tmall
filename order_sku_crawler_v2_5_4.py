@@ -28,7 +28,7 @@ from sku_cost_utils import normalize_sku_spec
 
 SHOP_NAME = ""
 CDP_PORT = 0
-PAGE_SIZE = 15
+PAGE_SIZE = 50
 MAX_PAGES = 500
 
 DEFAULT_ORDER_URL = (

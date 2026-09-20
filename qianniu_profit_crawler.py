@@ -1812,15 +1812,32 @@ def capture_findpage_request(
         except Exception:
             pass
 
+    def wait_until_candidates_stable(max_wait_ms):
+        deadline = time.time() + max_wait_ms / 1000
+        last_count = 0
+        stable_since = None
+
+        while time.time() < deadline:
+            current_count = len(candidates)
+
+            if current_count:
+                if current_count != last_count:
+                    last_count = current_count
+                    stable_since = time.time()
+                elif stable_since and time.time() - stable_since >= 1.5:
+                    break
+
+            page.wait_for_timeout(500)
+
     # --------------------------------------------------------
     # 等页面真实接口
     # --------------------------------------------------------
 
-    page.wait_for_timeout(
-        20000
+    wait_until_candidates_stable(
+        14000
         if smart_campaign_id
         else
-        12000
+        8000
     )
 
     # --------------------------------------------------------
@@ -1839,7 +1856,7 @@ def capture_findpage_request(
         except Exception:
             pass
 
-        page.wait_for_timeout(
+        wait_until_candidates_stable(
             12000
         )
 
