@@ -52,6 +52,7 @@ ARK_REALTIME_ITEM_URL = "https://ark.xiaohongshu.com/api/edith/business_data/rea
 QIANFAN_PROMOTION_URL = "https://chengfeng.xiaohongshu.com/cf/ad/manage?type=increment"
 QIANFAN_BALANCE_URL = "https://chengfeng.xiaohongshu.com/api/wind/advertiser/balance"
 QIANFAN_CAMPAIGN_URL = "https://chengfeng.xiaohongshu.com/api/wind/campaign/list"
+QIANFAN_REPORT_URL = "https://chengfeng.xiaohongshu.com/api/wind/data/report"
 
 
 def num(value: Any, default: float = 0.0) -> float:
@@ -347,6 +348,60 @@ def fetch_promotions(page: CdpPage, day: str, page_size: int = 50, max_pages: in
     balance = balance_data.get("data") or {}
     account_spend = cents(balance.get("todaySpend") or balance.get("dayToSpendingTotal"))
     account_balance = cents(balance.get("availableBalance"))
+
+    report_columns = ["fee", "allDealOrderGmv1d", "allRoi1d"]
+    report_rows = []
+    for page_no in range(1, max_pages + 1):
+        data = browser_fetch_json(
+            page,
+            QIANFAN_REPORT_URL,
+            body={
+                "startDate": day,
+                "endDate": day,
+                "webModule": "overall_report_page",
+                "dataSource": "spu",
+                "timeUnit": "DAY",
+                "dataPattern": "table",
+                "splitColumns": ["spuId"],
+                "columns": report_columns,
+                "pageNum": page_no,
+                "pageSize": page_size,
+            },
+        )
+        payload = data.get("data") or {}
+        for item in payload.get("dataList") or []:
+            metrics_raw = item.get("dataValueJson") or "{}"
+            try:
+                metrics = json.loads(metrics_raw) if isinstance(metrics_raw, str) else metrics_raw
+            except Exception:
+                metrics = {}
+            spend = num(metrics.get("fee"))
+            if spend <= 0:
+                continue
+            product_id = text(item.get("spuId") or metrics.get("spuId"))
+            report_rows.append(
+                {
+                    "推广数据日期": day,
+                    "商品ID": product_id,
+                    "商品名称": "",
+                    "罗盘支付金额": num(metrics.get("allDealOrderGmv1d")),
+                    "店铺被投推广消耗": 0.0,
+                    "推商品推广消耗": spend,
+                    "推广消耗合计": spend,
+                    "推广数据口径": "小红书千帆整体报表商品级消耗",
+                    "推广更新时间": datetime.now().strftime("%m-%d %H:%M"),
+                    "推广后台ROI": num(metrics.get("allRoi1d")),
+                }
+            )
+        page_info = payload.get("page") or {}
+        total = int(page_info.get("totalCount") or 0)
+        if not payload.get("dataList") or (total and page_no * page_size >= total):
+            break
+
+    if report_rows:
+        df = pd.DataFrame(report_rows)
+        product_spend = float(df["推商品推广消耗"].sum())
+        return df, max(account_spend, product_spend), account_balance
 
     columns = [
         "campaignFilterState",
