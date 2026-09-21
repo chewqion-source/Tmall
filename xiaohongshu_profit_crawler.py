@@ -260,33 +260,47 @@ def fetch_realtime_items(page: CdpPage, page_size: int = 50, max_pages: int = 20
 
 def fetch_orders(page: CdpPage, day: str, page_size: int = 50, max_pages: int = 30) -> list[dict[str, Any]]:
     start_ms, end_ms = day_ms_bounds(day)
-    rows: list[dict[str, Any]] = []
-    for page_no in range(1, max_pages + 1):
-        data = browser_fetch_json(
-            page,
-            ARK_ORDER_PAGE_URL,
-            body={
-                "page_no": page_no,
-                "page_size": page_size,
-                "time_range_list": [
-                    {
-                        "time_type": 2,
-                        "start_time": start_ms,
-                        "end_time": end_ms,
-                    }
-                ],
-                "order_by": "paid_at",
-                "order": "desc",
-            },
-        )
-        payload = data.get("data") or {}
-        items = payload.get("packages") or []
-        rows.extend(items)
-        total = int(payload.get("total") or payload.get("total_count") or 0)
-        if not items or len(items) < page_size:
-            break
-        if total and len(rows) >= total:
-            break
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    # time_type=2 is the normal paid-at query, but fully cancelled/refunded
+    # packages can disappear from it on some days. time_type=1 catches those
+    # packages; we still filter by paidAt so they are counted on the payment day.
+    for time_type in [2, 1]:
+        seen_for_type = 0
+        for page_no in range(1, max_pages + 1):
+            data = browser_fetch_json(
+                page,
+                ARK_ORDER_PAGE_URL,
+                body={
+                    "page_no": page_no,
+                    "page_size": page_size,
+                    "time_range_list": [
+                        {
+                            "time_type": time_type,
+                            "start_time": start_ms,
+                            "end_time": end_ms,
+                        }
+                    ],
+                    "order_by": "paid_at",
+                    "order": "desc",
+                },
+            )
+            payload = data.get("data") or {}
+            items = payload.get("packages") or []
+            for item in items:
+                paid_day = text(item.get("paidAt") or item.get("orderedAt") or item.get("createdAt"))[:10]
+                if paid_day != day:
+                    continue
+                key = text(item.get("packageId") or item.get("orderId"))
+                if key:
+                    rows_by_id[key] = item
+            seen_for_type += len(items)
+            total = int(payload.get("total") or payload.get("total_count") or 0)
+            if not items or len(items) < page_size:
+                break
+            if total and seen_for_type >= total:
+                break
+    rows = list(rows_by_id.values())
+    rows.sort(key=lambda item: text(item.get("paidAt") or item.get("orderedAt") or item.get("createdAt")), reverse=True)
     return rows
 
 
@@ -444,8 +458,7 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
     for package in orders:
         if is_sample_package(package):
             continue
-        if text(package.get("status")) == "998" or "取消" in text(package.get("statusDesc")):
-            continue
+        is_cancelled = text(package.get("status")) == "998" or "取消" in text(package.get("statusDesc"))
 
         package_id = text(package.get("packageId"))
         order_id = text(package.get("orderId") or package.get("order_id") or package_id)
@@ -503,9 +516,10 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
                         "商家编码": text(sku.get("scskuCode") or sku.get("skuId")),
                         "SKU规格": sku_spec,
                         "支付金额": paid,
-                        "SKU订单数": 1,
-                        "SKU成交件数": sku_quantity,
+                        "SKU订单数": 0 if is_cancelled else 1,
+                        "SKU成交件数": 0.0 if is_cancelled else sku_quantity,
                         "单价": num(sku.get("skuSoldPrice") or sku.get("skuRawPrice")),
+                        "取消订单": is_cancelled,
                     }
                 )
                 continue
@@ -538,9 +552,10 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
                         "商家编码": text(sc.get("scskuCode") or sku.get("scskuCode")),
                         "SKU规格": sku_spec or text(sc.get("specification") or sc.get("skuName") or sc.get("name")),
                         "支付金额": paid,
-                        "SKU订单数": 1,
-                        "SKU成交件数": qty,
+                        "SKU订单数": 0 if is_cancelled else 1,
+                        "SKU成交件数": 0.0 if is_cancelled else qty,
                         "单价": num(sc.get("soldPrice") or sku.get("skuSoldPrice")),
+                        "取消订单": is_cancelled,
                     }
                 )
     return pd.DataFrame(rows)
@@ -732,6 +747,11 @@ def apply_costs(df: pd.DataFrame) -> pd.DataFrame:
     df["单件货价"] = prices
     df["快递费"] = freights
     df["成本匹配状态"] = statuses
+    if "取消订单" in df.columns:
+        cancelled_mask = df["取消订单"].fillna(False).astype(bool)
+        df.loc[cancelled_mask, "单件货价"] = 0.0
+        df.loc[cancelled_mask, "快递费"] = 0.0
+        df.loc[cancelled_mask, "成本匹配状态"] = "已取消仅计支付"
     df["货品成本"] = df["单件货价"] * df["SKU成交件数"]
     if "订单号" not in df.columns:
         df["快递成本"] = df["快递费"] * df["SKU订单数"]
@@ -779,7 +799,7 @@ def build_profit(
                     "支付金额": "sum",
                     "SKU订单数": "sum",
                     "SKU成交件数": "sum",
-                    "单件货价": "last",
+                    "单件货价": "max",
                     "快递费": "max",
                     "货品成本": "sum",
                     "快递成本": "sum",
