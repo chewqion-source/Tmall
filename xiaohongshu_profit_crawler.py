@@ -82,9 +82,27 @@ def day_ms_bounds(day: str) -> tuple[int, int]:
     return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
 
 
+def normalize_epoch_ms(value: Any) -> int:
+    try:
+        raw = text(value)
+        if not raw:
+            return 0
+        timestamp = int(float(raw))
+    except Exception:
+        return 0
+    if timestamp <= 0:
+        return 0
+    if timestamp < 10_000_000_000:
+        return timestamp * 1000
+    return timestamp
+
+
 def ms_to_day(value: Any) -> str:
     try:
-        return datetime.fromtimestamp(int(value) / 1000).strftime("%Y-%m-%d")
+        timestamp = normalize_epoch_ms(value)
+        if not timestamp:
+            return ""
+        return datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d")
     except Exception:
         return ""
 
@@ -272,7 +290,7 @@ def fetch_orders(page: CdpPage, day: str, page_size: int = 50, max_pages: int = 
     return rows
 
 
-def fetch_success_refunds(page: CdpPage, day: str, page_size: int = 50, max_pages: int = 20) -> list[dict[str, Any]]:
+def fetch_success_refunds(page: CdpPage, day: str, page_size: int = 200, max_pages: int = 30) -> list[dict[str, Any]]:
     start_ms, end_ms = day_ms_bounds(day)
     rows: list[dict[str, Any]] = []
     for page_no in range(1, max_pages + 1):
@@ -281,21 +299,30 @@ def fetch_success_refunds(page: CdpPage, day: str, page_size: int = 50, max_page
             ARK_AFTERSALE_URL,
             params={
                 "page": page_no,
-                "number": page_no,
+                "number": page_size,
                 "pageSize": page_size,
                 "size": page_size,
-                "status_in": "12",
+                "status_in": "4",
             },
         )
         payload = data.get("data") or {}
         items = payload.get("after_sales") or []
+        crossed_start = False
         for item in items:
-            refund_at = int(item.get("refund_ok_time") or item.get("updated_at") or item.get("time") or 0)
-            if start_ms <= refund_at <= end_ms and (
-                "成功" in text(item.get("status_name"))
-                or str(item.get("status")) == "12"
-            ):
+            refund_at = normalize_epoch_ms(
+                item.get("refund_ok_time")
+                or item.get("refund_time")
+                or item.get("time")
+                or item.get("update_at")
+                or item.get("updated_at")
+            )
+            if refund_at < start_ms:
+                crossed_start = True
+                continue
+            if start_ms <= refund_at <= end_ms and str(item.get("status")) == "4":
                 rows.append(item)
+        if crossed_start:
+            break
         if not items or len(items) < page_size:
             break
     return rows
@@ -523,7 +550,7 @@ def parse_refunds(refunds: list[dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for item in refunds:
         refund_amount_total = num(item.get("refund_fee") or item.get("refunded") or item.get("expected_refund_amount"))
-        refund_time = item.get("refund_ok_time") or item.get("time")
+        refund_time = item.get("refund_ok_time") or item.get("refund_time") or item.get("time") or item.get("update_at")
         skus = item.get("skus") or []
         if not skus:
             rows.append(
@@ -542,10 +569,27 @@ def parse_refunds(refunds: list[dict[str, Any]]) -> pd.DataFrame:
                 }
             )
             continue
-        paid_sum = sum(num(sku.get("paid_and_deposit_amount") or sku.get("pay_amount")) for sku in skus)
+        paid_sum = sum(
+            num(
+                sku.get("applied_total_amount")
+                or sku.get("total_return_amount")
+                or sku.get("return_price")
+                or sku.get("paid_and_deposit_amount_sum")
+                or sku.get("paid_and_deposit_amount")
+                or sku.get("pay_amount")
+            )
+            for sku in skus
+        )
         for sku in skus:
             product_id = text(sku.get("item_id") or sku.get("itemId"))
-            paid = num(sku.get("paid_and_deposit_amount") or sku.get("pay_amount"))
+            paid = num(
+                sku.get("applied_total_amount")
+                or sku.get("total_return_amount")
+                or sku.get("return_price")
+                or sku.get("paid_and_deposit_amount_sum")
+                or sku.get("paid_and_deposit_amount")
+                or sku.get("pay_amount")
+            )
             refund_amount = refund_amount_total * paid / paid_sum if paid_sum else refund_amount_total / len(skus)
             rows.append(
                 {
@@ -555,9 +599,9 @@ def parse_refunds(refunds: list[dict[str, Any]]) -> pd.DataFrame:
                     "SKU订单号": text(sku.get("sku_id") or sku.get("skuId")),
                     "退款成功日期": ms_to_day(refund_time),
                     "商品ID": product_id,
-                    "商品名称": text(sku.get("display_name") or sku.get("name")),
-                    "商家编码": text(sku.get("scsku_code") or sku.get("scskuCode")),
-                    "SKU规格": text(sku.get("sku_specification") or sku.get("skuSpecification")),
+                    "商品名称": text(sku.get("display_name") or sku.get("name") or sku.get("sku_name")),
+                    "商家编码": text(sku.get("scsku_code") or sku.get("scskuCode") or sku.get("barcode")),
+                    "SKU规格": text(sku.get("sku_specification") or sku.get("skuSpecification") or sku.get("sku_name")),
                     "退款金额": refund_amount,
                     "售后状态": text(item.get("status_name")),
                 }
