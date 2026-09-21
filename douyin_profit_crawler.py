@@ -287,18 +287,26 @@ def browser_fetch_json(
     url: str,
     params: dict[str, Any] | None = None,
     method: str = "GET",
+    json_body: dict[str, Any] | None = None,
 ) -> Any:
     full_url = url
     if params:
         query = urllib.parse.urlencode(params, doseq=True)
         full_url = f"{url}?{query}"
 
+    headers = {"accept": "application/json, text/plain, */*"}
+    body_line = ""
+    if json_body is not None:
+        headers["content-type"] = "application/json"
+        body_line = f", body: {json.dumps(json.dumps(json_body, ensure_ascii=False))}"
+
     expr = f"""
     (async () => {{
       const res = await fetch({json.dumps(full_url)}, {{
         method: {json.dumps(method)},
         credentials: 'include',
-        headers: {{ 'accept': 'application/json, text/plain, */*' }}
+        headers: {json.dumps(headers)}
+        {body_line}
       }});
       const text = await res.text();
       return JSON.stringify({{ ok: res.ok, status: res.status, url: res.url, text }});
@@ -566,6 +574,87 @@ def parse_qianchuan_balance_text(body_text: str) -> float | None:
     return None
 
 
+QIANCHUAN_SUMMARY_METRICS = [
+    "total_prepay_and_pay_settle_overall_roi2_1h",
+    "total_prepay_and_pay_settle_overall_roi2_1h_primary",
+    "total_order_settle_amount_for_roi2_1h",
+    "total_order_settle_amount_for_roi2_1h_primary",
+    "total_order_settle_count_for_roi2_1h",
+    "total_order_settle_count_for_roi2_1h_primary",
+    "total_order_real_settle_amount_for_roi2_1h",
+    "total_order_real_settle_amount_for_roi2_1h_primary",
+    "total_refund_order_gmv_for_roi2_1h_rate",
+    "total_refund_order_gmv_for_roi2_1h_rate_primary",
+    "total_order_settle_amount_rate_for_roi2_1h",
+    "total_order_settle_amount_rate_for_roi2_1h_primary",
+    "total_pay_order_count_for_roi2",
+    "total_pay_order_count_for_roi2_primary",
+    "total_pay_order_gmv_include_coupon_for_roi2",
+    "total_pay_order_gmv_include_coupon_for_roi2_primary",
+    "total_pay_order_gmv_for_roi2",
+    "total_pay_order_gmv_for_roi2_primary",
+    "total_order_settle_amount_for_roi2_7d",
+    "total_order_settle_amount_for_roi2_7d_primary",
+    "stat_cost_for_overall_roi2",
+    "stat_cost_for_overall_roi2_primary",
+    "stat_cost",
+    "stat_cost_for_roi2_primary",
+    "total_cost_per_pay_order_settle_for_overall_roi2_1h",
+    "total_cost_per_pay_order_settle_for_overall_roi2_1h_primary",
+    "shop_estimated_comission_cost",
+    "shop_estimated_comission_cost_primary",
+    "total_cost_per_pay_order_for_roi2",
+    "total_cost_per_pay_order_for_roi2_primary",
+]
+
+
+def qianchuan_metric_value(metrics: dict[str, Any], key: str) -> float:
+    value = metrics.get(key) if isinstance(metrics, dict) else None
+    if isinstance(value, dict):
+        return num(value.get("value"))
+    return num(value)
+
+
+def fetch_qianchuan_overall_api(page: CdpPage, day: str) -> tuple[float, str]:
+    request_body = {
+        "DiscardTotalNum": True,
+        "NeedRequestOptional": True,
+        "SophonxDataSetKey": "overall_roi_promotion_list_for_live_v2",
+        "AdFilter": {
+            "MarGoal": 2,
+            "AdlabMode": 1,
+            "AdlabScene": 1,
+            "SmartBidType": 0,
+            "IsOverallRoi": 1,
+            "StartTime": f"{day} 00:00:00",
+            "EndTime": f"{day} 23:59:59",
+        },
+        "Metrics": QIANCHUAN_SUMMARY_METRICS,
+        "Dimensions": ["dynamic_external_action"],
+        "aavid": QIANCHUAN_AAVID,
+    }
+    payload = browser_fetch_json(
+        page,
+        "https://qianchuan.jinritemai.com/ad/api/pmc/v1/uni-promotion/ad/list-summary",
+        {"aavid": QIANCHUAN_AAVID},
+        method="POST",
+        json_body=request_body,
+    )
+    if payload.get("status_code") not in (0, "0", None):
+        raise RuntimeError(f"千川消耗接口失败：{payload.get('message') or payload}")
+    metrics = (
+        (payload.get("data") or {})
+        .get("totalMetrics", {})
+        .get("metrics", {})
+    )
+    overall_ad = qianchuan_metric_value(metrics, "statCost")
+    if overall_ad <= 0:
+        overall_ad = qianchuan_metric_value(metrics, "statCostForOverallRoi2")
+    if overall_ad <= 0:
+        overall_ad = qianchuan_metric_value(metrics, "statCostForRoi2Primary")
+    return overall_ad, datetime.now().strftime("%m-%d %H:%M")
+
+
 def fetch_qianchuan_account_balance(page: CdpPage) -> float | None:
     try:
         payload = browser_fetch_json(
@@ -646,7 +735,10 @@ def fetch_realtime_qianchuan_summary(page: CdpPage, day: str) -> pd.DataFrame:
         """
     )
     body_text = payload.get("body_text", "")
-    overall_ad, updated_at = parse_qianchuan_overall_text(body_text)
+    try:
+        overall_ad, updated_at = fetch_qianchuan_overall_api(page, day)
+    except Exception:
+        overall_ad, updated_at = parse_qianchuan_overall_text(body_text)
     ad_balance = fetch_qianchuan_account_balance(page)
     if ad_balance is None:
         ad_balance = parse_qianchuan_balance_text(body_text)
@@ -740,6 +832,67 @@ def fetch_realtime_settlement_summary(page: CdpPage, day: str) -> pd.DataFrame:
             }
         ]
     )
+
+
+def fetch_complete_promotion_total(page: CdpPage, day: str) -> float:
+    """Fetch the Douyin Compass natural-day total ad spend."""
+    page.call("Page.enable")
+    page.call("Page.navigate", {"url": SETTLEMENT_ANALYSIS_URL})
+    time.sleep(3)
+    day_text = datetime.strptime(day, "%Y-%m-%d").strftime("%Y/%m/%d")
+    params = {
+        "date_type": "2",
+        "end_date": f"{day_text} 00:00:00",
+        "begin_date": f"{day_text} 00:00:00",
+        "activity_id": "",
+        "is_activity": "false",
+        "operate_type": "0",
+        "content_type": "0",
+        "traffic_channel": "1",
+        "refund_type": "1",
+        "select_ad_expense_ratio": "ad_costed_expense_ratio_with_refund",
+        "select_ad_cost": "ad_costed_amt",
+    }
+    data = browser_fetch_json(
+        page,
+        "https://compass.jinritemai.com/compass_api/shop/common/trade/income_expense_index_v3",
+        params,
+    )
+    if data.get("st") not in (0, "0", None):
+        raise RuntimeError(f"抖店完整推广总额接口失败：{data.get('msg') or data.get('st')}")
+    return settlement_metric_cents(data, "ad_costed_amt")
+
+
+def reconcile_promotions_with_total(
+    promotions_df: pd.DataFrame,
+    day: str,
+    complete_total: float,
+    source: str = "罗盘收支单日总额",
+) -> pd.DataFrame:
+    """Keep product ad rows and add a store-level adjustment for missed spend."""
+    existing_total = 0.0
+    if promotions_df is not None and not promotions_df.empty and "推广消耗合计" in promotions_df.columns:
+        existing_total = float(
+            pd.to_numeric(promotions_df["推广消耗合计"], errors="coerce").fillna(0).sum()
+        )
+    if complete_total <= existing_total + 0.01:
+        return promotions_df
+
+    adjustment = round(complete_total - existing_total, 2)
+    adjustment_row = {
+        "推广数据日期": day,
+        "商品ID": "",
+        "商品名称": f"{source}补差",
+        "罗盘支付金额": 0.0,
+        "店铺被投推广消耗": adjustment,
+        "推商品推广消耗": 0.0,
+        "推广消耗合计": adjustment,
+        "推广数据口径": source,
+        "推广更新时间": datetime.now().strftime("%m-%d %H:%M"),
+    }
+    if promotions_df is None or promotions_df.empty:
+        return pd.DataFrame([adjustment_row])
+    return pd.concat([promotions_df, pd.DataFrame([adjustment_row])], ignore_index=True)
 
 
 def fetch_product_promotions(
@@ -1348,6 +1501,15 @@ def run(port: int = DEFAULT_PORT, day: str | None = None, promotion_day: str | N
             )
         else:
             promotions_df = fetch_product_promotions(promo_page, promotion_day)
+        try:
+            complete_total = fetch_complete_promotion_total(promo_page, promotion_day)
+            promotions_df = reconcile_promotions_with_total(
+                promotions_df,
+                promotion_day,
+                complete_total,
+            )
+        except Exception:
+            pass
     finally:
         promo_page.close()
 
