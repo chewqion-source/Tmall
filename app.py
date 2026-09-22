@@ -511,21 +511,48 @@ def _available_date_bounds(data: pd.DataFrame) -> tuple[pd.Timestamp, pd.Timesta
     return dates.min().normalize(), dates.max().normalize()
 
 
-def _render_custom_date_range(
+def _default_date_range_for_label(
+    data: pd.DataFrame,
+    range_label: str,
+) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    bounds = _available_date_bounds(data)
+    if bounds is None:
+        return None
+    min_date, max_date = bounds
+    if range_label == "昨日":
+        end_date = max(min_date, max_date - pd.Timedelta(days=1))
+        start_date = end_date
+    else:
+        days = _range_days(range_label)
+        end_date = max_date
+        start_date = max(min_date, max_date - pd.Timedelta(days=days - 1))
+    return start_date, end_date
+
+
+def _render_date_range_controls(
     data: pd.DataFrame,
     range_label: str,
     key_prefix: str,
 ) -> tuple[pd.Timestamp, pd.Timestamp] | None:
-    if range_label != "自定义":
-        return None
     bounds = _available_date_bounds(data)
     if bounds is None:
         st.caption("暂无可选日期")
         return None
     min_date, max_date = bounds
-    default_start = max(min_date, max_date - pd.Timedelta(days=29))
-    start_value = st.session_state.get(f"{key_prefix}_start", default_start.date())
-    end_value = st.session_state.get(f"{key_prefix}_end", max_date.date())
+    default_range = _default_date_range_for_label(data, range_label) or (min_date, max_date)
+    start_key = f"{key_prefix}_start"
+    end_key = f"{key_prefix}_end"
+    quick_key = f"{key_prefix}_quick"
+    quick_signature = (range_label, min_date.date().isoformat(), max_date.date().isoformat())
+    if st.session_state.get(quick_key) != quick_signature:
+        st.session_state[start_key] = default_range[0].date()
+        st.session_state[end_key] = default_range[1].date()
+        st.session_state[quick_key] = quick_signature
+
+    start_value = pd.Timestamp(st.session_state.get(start_key, default_range[0].date())).date()
+    end_value = pd.Timestamp(st.session_state.get(end_key, default_range[1].date())).date()
+    start_value = min(max(start_value, min_date.date()), max_date.date())
+    end_value = min(max(end_value, min_date.date()), max_date.date())
     cols = st.columns(2)
     with cols[0]:
         start_date = st.date_input(
@@ -533,7 +560,7 @@ def _render_custom_date_range(
             value=start_value,
             min_value=min_date.date(),
             max_value=max_date.date(),
-            key=f"{key_prefix}_start",
+            key=start_key,
         )
     with cols[1]:
         end_date = st.date_input(
@@ -541,7 +568,7 @@ def _render_custom_date_range(
             value=end_value,
             min_value=min_date.date(),
             max_value=max_date.date(),
-            key=f"{key_prefix}_end",
+            key=end_key,
         )
     start_ts = pd.Timestamp(start_date).normalize()
     end_ts = pd.Timestamp(end_date).normalize()
@@ -559,7 +586,7 @@ def _period_window(
     if data.empty:
         today = pd.Timestamp.today().normalize()
         return today, today
-    if range_label == "自定义" and custom_range is not None:
+    if custom_range is not None:
         start_date = pd.Timestamp(custom_range[0]).normalize()
         end_date = pd.Timestamp(custom_range[1]).normalize()
         if start_date > end_date:
@@ -1415,7 +1442,7 @@ def load_product_thumbnails(store: str) -> dict[str, str]:
     return thumbnails
 
 
-TREND_RANGE_OPTIONS = ("今日", "昨日", "3天", "7天", "15天", "近一个月", "近半年", "自定义")
+TREND_RANGE_OPTIONS = ("今日", "昨日", "3天", "7天", "15天", "近一个月", "近半年")
 CHART_CARD_MARGIN = dict(l=18, r=18, t=46, b=24)
 
 
@@ -1462,7 +1489,7 @@ def filter_trend_range(
     custom_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
 ) -> pd.DataFrame:
     latest_date = data["date"].max()
-    if range_label == "自定义" and custom_range is not None:
+    if custom_range is not None:
         start_date, end_date = custom_range
         filtered = data[(data["date"] >= start_date) & (data["date"] <= end_date)]
     elif range_label == "今日":
@@ -2324,7 +2351,7 @@ with store_filter_cols[1]:
     trend_range = st.selectbox("选择时间", TREND_RANGE_OPTIONS, index=5, key="store_trend_range")
 store_daily = all_daily[all_daily["store"] == selected_store].copy()
 with store_filter_cols[2]:
-    store_custom_range = _render_custom_date_range(store_daily, trend_range, "store_custom_range")
+    store_custom_range = _render_date_range_controls(store_daily, trend_range, "store_date_range")
 complete = complete_daily_series(store_daily)
 summary = build_summary(store_daily, complete)
 products = summary["product_id"].tolist()
@@ -2354,10 +2381,10 @@ if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
 selected = complete[complete["product_id"] == selected_product].copy().sort_values("date")
 product_available_dates = store_daily[store_daily["product_id"].astype(str) == str(selected_product)].copy()
 with product_filter_cols[2]:
-    product_custom_range = _render_custom_date_range(
+    product_custom_range = _render_date_range_controls(
         product_available_dates if not product_available_dates.empty else selected,
         product_trend_range,
-        "product_custom_range",
+        "product_date_range",
     )
 trend_selected = filter_trend_range(selected, product_trend_range, product_custom_range)
 selected_summary = summary[summary["product_id"] == selected_product].iloc[0]
