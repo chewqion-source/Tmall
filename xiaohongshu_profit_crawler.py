@@ -31,6 +31,7 @@ import websocket
 
 from sku_cost_utils import merge_duplicate_sku_cost_rows, normalize_sku_spec
 from fee_config_utils import fee_rates_for_store
+from product_image_utils import first_image_from_obj
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -244,6 +245,7 @@ def fetch_realtime_items(page: CdpPage, page_size: int = 50, max_pages: int = 20
                 {
                     "商品ID": text(info.get("itemId") or metrics.get("id")),
                     "商品名称": text(info.get("name")),
+                    "商品主图": first_image_from_obj(info),
                     "支付金额": num(metrics.get("payGmv")),
                     "净支付金额": num(metrics.get("payNetAmt")),
                     "SKU成交件数": num(metrics.get("payGoodsCnt")),
@@ -879,6 +881,14 @@ def build_profit(
         grouped["货品成本"] = 0.0
         grouped["快递成本"] = 0.0
         grouped["成本匹配状态"] = "无订单成本"
+    elif not grouped.empty and not realtime_items_df.empty and "商品主图" in realtime_items_df.columns:
+        image_map = (
+            realtime_items_df.dropna(subset=["商品ID"])
+            .drop_duplicates("商品ID")
+            .set_index("商品ID")["商品主图"]
+            .to_dict()
+        )
+        grouped["商品主图"] = grouped["商品ID"].map(image_map).fillna(grouped.get("商品主图", ""))
 
     grouped["退款金额"] = pd.to_numeric(grouped.get("退款金额", 0), errors="coerce").fillna(0.0)
     for col in ["店铺被投推广消耗", "推商品推广消耗", "推广后台ROI"]:

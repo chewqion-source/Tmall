@@ -22,6 +22,7 @@ import pandas as pd
 from playwright.async_api import async_playwright
 
 from fee_config_utils import fee_rates_for_store
+from product_image_utils import first_image_from_obj
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -137,6 +138,7 @@ async def fetch_products(page) -> pd.DataFrame:
         rows.append({
             "商品ID": _text(item.get("itemId")),
             "商品名称": _text(item.get("title") or item.get("itemTitle") or item.get("itemName")),
+            "商品主图": first_image_from_obj(item),
             "商品货号": "",
             "支付件数": val("pay_qty_cnt"),
             "支付金额": val("pay_ord_amt"),

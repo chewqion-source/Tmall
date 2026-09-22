@@ -17,6 +17,8 @@ import numpy as np
 import pandas as pd
 from playwright.sync_api import sync_playwright
 
+from product_image_utils import first_image_from_obj
+
 
 # ============================================================
 # 千牛 / 生意参谋 / 万相 多店铺实时盈亏
@@ -629,6 +631,15 @@ def parse_sycm_response(data):
                 item.get(
                     "title",
                     ""
+                ),
+
+            "商品主图":
+                first_image_from_obj(
+                    item
+                )
+                or
+                first_image_from_obj(
+                    record
                 ),
 
             "商品货号":

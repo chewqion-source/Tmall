@@ -1442,16 +1442,34 @@ def render_sku_cost_manager() -> None:
 
 @st.cache_data(show_spinner=False)
 def load_product_thumbnails(store: str) -> dict[str, str]:
-    image_dir = Path(__file__).resolve().parent / "static" / "product_images" / store
-    if not image_dir.exists():
-        return {}
+    base_dir = Path(__file__).resolve().parent
+    store_key = str(store or "").strip()
+    store_aliases = [store_key]
+    if store_key == "坐拥_宁静":
+        store_aliases.append("坐拥宁静")
+    elif store_key == "坐拥宁静":
+        store_aliases.append("坐拥_宁静")
     thumbnails: dict[str, str] = {}
-    for image_path in image_dir.iterdir():
-        if not image_path.is_file():
+    source_path = base_dir / "product_image_sources.json"
+    if source_path.exists():
+        try:
+            sources = json.loads(source_path.read_text(encoding="utf-8"))
+        except Exception:
+            sources = {}
+        for alias in store_aliases:
+            for product_id, image_url in (sources.get(alias) or {}).items():
+                if str(image_url).strip():
+                    thumbnails[str(product_id)] = str(image_url).strip()
+    for alias in store_aliases:
+        image_dir = base_dir / "static" / "product_images" / alias
+        if not image_dir.exists():
             continue
-        mime_type = mimetypes.guess_type(image_path.name)[0] or "image/webp"
-        encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
-        thumbnails[image_path.stem] = f"data:{mime_type};base64,{encoded}"
+        for image_path in image_dir.iterdir():
+            if not image_path.is_file():
+                continue
+            mime_type = mimetypes.guess_type(image_path.name)[0] or "image/webp"
+            encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+            thumbnails[image_path.stem] = f"data:{mime_type};base64,{encoded}"
     return thumbnails
 
 

@@ -31,6 +31,7 @@ import websocket
 
 from sku_cost_utils import merge_duplicate_sku_cost_rows, normalize_sku_spec
 from fee_config_utils import fee_rates_for_store
+from product_image_utils import first_image_from_obj
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -1025,6 +1026,7 @@ def parse_orders(orders: list[dict[str, Any]]) -> pd.DataFrame:
                     "付款时间": datetime.fromtimestamp(int(pay_time)).strftime("%Y-%m-%d %H:%M:%S") if pay_time else "",
                     "商品ID": text(item.get("product_id")),
                     "商品名称": text(item.get("product_name")),
+                    "商品主图": first_image_from_obj(item),
                     "商家编码": text(item.get("merchant_sku_code")),
                     "SKU规格": sku_spec_text(item.get("sku_spec")),
                     "支付金额": merchant_income,
@@ -1310,6 +1312,7 @@ def build_profit(
             "商家编码",
             "SKU规格",
             "商品名称",
+            "商品主图",
             "支付金额",
             "用户实付金额",
             "平台补贴金额",
@@ -1352,6 +1355,7 @@ def build_profit(
         apply_costs(orders_df).groupby(["店铺", *keys, "商品名称"], as_index=False)
         .agg(
             {
+                "商品主图": "first",
                 "支付金额": "sum",
                 "用户实付金额": "sum",
                 "平台补贴金额": "sum",
