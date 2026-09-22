@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 from datetime import datetime
@@ -374,10 +374,27 @@ def inject_dashboard_styles() -> None:
     flex: 1;
     min-height: 0;
     display: block;
+    aspect-ratio: 16 / 7;
 }
 .svg-chart-label {
     fill: #64748b;
     font-size: 11px;
+}
+.hover-point {
+    opacity: 0;
+    cursor: default;
+    transition: opacity 120ms ease;
+}
+.hover-point:hover {
+    opacity: 1;
+}
+.hover-target {
+    fill: transparent;
+    stroke: transparent;
+    cursor: default;
+}
+.hover-target:hover + .hover-point {
+    opacity: 1;
 }
 .svg-chart-legend {
     display: flex;
@@ -1450,16 +1467,6 @@ def load_product_thumbnails(store: str) -> dict[str, str]:
     elif store_key == "坐拥宁静":
         store_aliases.append("坐拥_宁静")
     thumbnails: dict[str, str] = {}
-    source_path = base_dir / "product_image_sources.json"
-    if source_path.exists():
-        try:
-            sources = json.loads(source_path.read_text(encoding="utf-8"))
-        except Exception:
-            sources = {}
-        for alias in store_aliases:
-            for product_id, image_url in (sources.get(alias) or {}).items():
-                if str(image_url).strip():
-                    thumbnails[str(product_id)] = str(image_url).strip()
     for alias in store_aliases:
         image_dir = base_dir / "static" / "product_images" / alias
         if not image_dir.exists():
@@ -1470,6 +1477,16 @@ def load_product_thumbnails(store: str) -> dict[str, str]:
             mime_type = mimetypes.guess_type(image_path.name)[0] or "image/webp"
             encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
             thumbnails[image_path.stem] = f"data:{mime_type};base64,{encoded}"
+    source_path = base_dir / "product_image_sources.json"
+    if source_path.exists():
+        try:
+            sources = json.loads(source_path.read_text(encoding="utf-8"))
+        except Exception:
+            sources = {}
+        for alias in store_aliases:
+            for product_id, image_url in (sources.get(alias) or {}).items():
+                if str(image_url).strip():
+                    thumbnails[str(product_id)] = str(image_url).strip()
     return thumbnails
 
 
@@ -1545,6 +1562,23 @@ def _line_points(values: list[float], width: int, height: int, pad: int) -> str:
     return " ".join(f"{x:.1f},{y:.1f}" for x, y in _line_coords(values, width, height, pad))
 
 
+def _smooth_path(coords: list[tuple[float, float]]) -> str:
+    if not coords:
+        return ""
+    if len(coords) == 1:
+        x, y = coords[0]
+        return f"M {x:.1f} {y:.1f}"
+    parts = [f"M {coords[0][0]:.1f} {coords[0][1]:.1f}"]
+    for index in range(1, len(coords)):
+        prev_x, prev_y = coords[index - 1]
+        x, y = coords[index]
+        control_dx = (x - prev_x) * 0.45
+        c1x = prev_x + control_dx
+        c2x = x - control_dx
+        parts.append(f"C {c1x:.1f} {prev_y:.1f}, {c2x:.1f} {y:.1f}, {x:.1f} {y:.1f}")
+    return " ".join(parts)
+
+
 def _line_coords(
     values: list[float],
     width: int,
@@ -1587,6 +1621,27 @@ def _chart_ticks(data: pd.DataFrame) -> list[tuple[float, str]]:
     return [(pad + index * step, pd.Timestamp(dates[index]).strftime("%m-%d")) for index in indexes]
 
 
+def _svg_hover_points(
+    coords: list[tuple[float, float]],
+    dates: list[object],
+    values: list[float],
+    label: str,
+    color: str,
+    formatter,
+) -> str:
+    points: list[str] = []
+    for (x, y), date_value, value in zip(coords, dates, values):
+        date_label = pd.Timestamp(date_value).strftime("%Y-%m-%d")
+        title = escape(f"{date_label}\n{label}: {formatter(value)}")
+        points.append(
+            f'<circle class="hover-target" cx="{x:.1f}" cy="{y:.1f}" r="11">'
+            f'<title>{title}</title></circle>'
+            f'<circle class="hover-point" cx="{x:.1f}" cy="{y:.1f}" r="4.5" fill="#ffffff" '
+            f'stroke="{color}" stroke-width="2" pointer-events="none" />'
+        )
+    return "".join(points)
+
+
 def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360) -> None:
     del height
     if data.empty:
@@ -1604,8 +1659,11 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360)
     axis_high = max(max_sales, max_orders, 1.0) * 1.12
     sales_coords = _line_coords(sales_values, width, chart_height, pad, 0.0, axis_high)
     order_coords = _line_coords(order_values, width, chart_height, pad, 0.0, axis_high)
-    sales_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in sales_coords)
-    order_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in order_coords)
+    sales_path = _smooth_path(sales_coords)
+    order_path = _smooth_path(order_coords)
+    dates = data["date"].tolist()
+    hover_points = _svg_hover_points(sales_coords, dates, sales_values, "件数", "#2563eb", lambda value: f"{value:,.0f}")
+    hover_points += _svg_hover_points(order_coords, dates, order_values, "订单数", "#f59e0b", lambda value: f"{value:,.0f}")
     tick_html = "".join(
         f'<text x="{x:.1f}" y="232" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
         for x, label in _chart_ticks(data)
@@ -1620,18 +1678,65 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360)
     <span><i class="legend-dot" style="background:#2563eb"></i>件数</span>
     <span><i class="legend-dot" style="background:#f59e0b"></i>订单数</span>
   </div>
-  <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="none">
+  <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="xMidYMid meet">
     <line x1="{pad}" y1="218" x2="610" y2="218" stroke="#cbd5e1" stroke-width="1" />
     <line x1="{pad}" y1="42" x2="610" y2="42" stroke="#e2e8f0" stroke-width="1" />
     <line x1="{pad}" y1="130" x2="610" y2="130" stroke="#e2e8f0" stroke-width="1" />
     <line x1="{pad}" y1="42" x2="{pad}" y2="218" stroke="#cbd5e1" stroke-width="1" />
     <text x="10" y="46" class="svg-chart-label">{_compact_number(axis_high)}</text>
     <text x="10" y="222" class="svg-chart-label">0</text>
-    <polyline fill="none" stroke="#2563eb" stroke-width="3" points="{sales_points}" />
-    <polyline fill="none" stroke="#f59e0b" stroke-width="3" stroke-dasharray="6 5" points="{order_points}" />
+    <path fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="{sales_path}" />
+    <path fill="none" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5" d="{order_path}" />
+    {hover_points}
     <text x="{min(sales_label_x + 8, 584):.1f}" y="{max(sales_label_y - 8, 18):.1f}" class="svg-chart-label">件数 {_compact_number(sales_values[-1])}</text>
     <text x="{min(order_label_x + 8, 584):.1f}" y="{min(order_label_y + 18, 260):.1f}" class="svg-chart-label">订单 {_compact_number(order_values[-1])}</text>
     <text x="610" y="28" text-anchor="end" class="svg-chart-label">订单最高 {_compact_number(max_orders)}</text>
+    {tick_html}
+  </svg>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 360) -> None:
+    del height
+    if data.empty or "pay_amount" not in data.columns:
+        st.markdown(
+            f'<div class="svg-chart-card"><div class="svg-chart-title">{escape(title)}</div>暂无数据</div>',
+            unsafe_allow_html=True,
+        )
+        return
+    data = data.sort_values("date")
+    width, chart_height, pad = 640, 280, 58
+    values = [float(value) for value in pd.to_numeric(data["pay_amount"], errors="coerce").fillna(0)]
+    axis_high = max(max(values) if values else 0, 1.0) * 1.12
+    coords = _line_coords(values, width, chart_height, pad, 0.0, axis_high)
+    line_path = _smooth_path(coords)
+    hover_points = _svg_hover_points(coords, data["date"].tolist(), values, "支付金额", "#0ea5e9", _format_money)
+    tick_html = "".join(
+        f'<text x="{x:.1f}" y="232" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
+        for x, label in _chart_ticks(data)
+    )
+    label_x, label_y = coords[-1] if coords else (pad, pad)
+    st.markdown(
+        f"""
+<div class="svg-chart-card">
+  <div class="svg-chart-title">{escape(title)}</div>
+  <div class="svg-chart-legend">
+    <span><i class="legend-dot" style="background:#0ea5e9"></i>支付金额</span>
+  </div>
+  <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="xMidYMid meet">
+    <line x1="{pad}" y1="218" x2="610" y2="218" stroke="#cbd5e1" stroke-width="1" />
+    <line x1="{pad}" y1="42" x2="610" y2="42" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="130" x2="610" y2="130" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="42" x2="{pad}" y2="218" stroke="#cbd5e1" stroke-width="1" />
+    <text x="10" y="46" class="svg-chart-label">{_compact_number(axis_high)}</text>
+    <text x="10" y="222" class="svg-chart-label">0</text>
+    <path fill="none" stroke="#0ea5e9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="{line_path}" />
+    {hover_points}
+    <text x="{min(label_x + 8, 584):.1f}" y="{max(label_y - 8, 18):.1f}" class="svg-chart-label">支付 {_format_money(values[-1])}</text>
+    <text x="610" y="28" text-anchor="end" class="svg-chart-label">最高 {_format_money(max(values) if values else 0)}</text>
     {tick_html}
   </svg>
 </div>
@@ -1676,7 +1781,7 @@ def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360) -> No
         f"""
 <div class="svg-chart-card">
   <div class="svg-chart-title">{escape(title)}</div>
-  <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="none">
+  <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="xMidYMid meet">
     <line x1="{pad}" y1="{baseline}" x2="610" y2="{baseline}" stroke="#64748b" stroke-width="1" />
     <line x1="{pad}" y1="42" x2="610" y2="42" stroke="#e2e8f0" stroke-width="1" />
     <line x1="{pad}" y1="238" x2="610" y2="238" stroke="#e2e8f0" stroke-width="1" />
@@ -2280,10 +2385,12 @@ def render_store_overview_section(
 
     st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
 
-    chart_cols = st.columns(2)
+    chart_cols = st.columns(3)
     with chart_cols[0]:
-        render_sales_orders_trend(trend_store, "订单数与件数折线图", height=300)
+        render_pay_amount_trend(trend_store, "支付金额折线图", height=300)
     with chart_cols[1]:
+        render_sales_orders_trend(trend_store, "订单数与件数折线图", height=300)
+    with chart_cols[2]:
         render_profit_trend(trend_store, "盈亏柱状趋势图", height=300)
 
 
@@ -2314,10 +2421,12 @@ def render_product_overview_section(
 
     st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
 
-    chart_cols = st.columns(2)
+    chart_cols = st.columns(3)
     with chart_cols[0]:
-        render_sales_orders_trend(trend_selected, "单品订单数与件数折线图", height=300)
+        render_pay_amount_trend(trend_selected, "单品支付金额折线图", height=300)
     with chart_cols[1]:
+        render_sales_orders_trend(trend_selected, "单品订单数与件数折线图", height=300)
+    with chart_cols[2]:
         render_profit_trend(trend_selected, "单品盈亏柱状趋势图", height=300)
 
 
@@ -2395,7 +2504,12 @@ products = summary["product_id"].tolist()
 
 store_trend = (
     store_daily.groupby(["date", "sheet"], as_index=False)
-    .agg(sales_qty=("sales_qty", "sum"), order_count=("order_count", "sum"), profit=("profit", "sum"))
+    .agg(
+        pay_amount=("pay_amount", "sum"),
+        sales_qty=("sales_qty", "sum"),
+        order_count=("order_count", "sum"),
+        profit=("profit", "sum"),
+    )
     .sort_values("date", ignore_index=True)
 )
 trend_store = filter_trend_range(store_trend, trend_range, store_custom_range)
@@ -2432,3 +2546,4 @@ render_changes_table(selected)
 render_product_summary_table(summary, selected_store)
 
 render_profit_advice_floating(realtime_daily, all_daily)
+

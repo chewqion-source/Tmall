@@ -514,9 +514,23 @@ def complete_daily_series(daily: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
         .sort_values(["product_id", "date"], ignore_index=True)
     )
-    complete["sales_qty"] = complete["sales_qty"].fillna(0.0)
-    complete["order_count"] = complete["order_count"].fillna(0.0)
-    complete["profit"] = complete["profit"].fillna(0.0)
+    zero_fill_columns = [
+        "sales_qty",
+        "order_count",
+        "profit",
+        "pay_amount",
+        "refund_amount",
+        "ad_cost",
+        "freight_cost",
+        "merchandise_cost",
+        "platform_fee",
+        "tax_fee",
+        "marketing_cost",
+        "sku_count",
+    ]
+    for column in zero_fill_columns:
+        if column in complete.columns:
+            complete[column] = complete[column].fillna(0.0)
     complete["sheet"] = complete["date"].dt.strftime("%-m.%-d") if __import__("os").name != "nt" else complete["date"].apply(lambda d: f"{d.month}.{d.day}")
     complete["sales_change"] = complete.groupby("product_id")["sales_qty"].diff()
     complete["orders_change"] = complete.groupby("product_id")["order_count"].diff()

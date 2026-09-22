@@ -1,4 +1,8 @@
 {
   "webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/替换成你的机器人webhook",
-  "secret": "如果机器人未开启签名校验，这里留空"
+  "secret": "如果机器人未开启签名校验，这里留空",
+  "app_id": "飞书应用 app_id",
+  "app_secret": "飞书应用 app_secret",
+  "chat_id": "目标飞书群 chat_id",
+  "feishu_sheet_url": "https://xxx.feishu.cn/sheets/xxxxxx?sheet=xxxxxx"
 }

@@ -52,6 +52,7 @@ SYNC_SKU_SCRIPT = BASE_DIR / "sync_sku_cost.py"
 CRAWLER_SCRIPT = BASE_DIR / "qianniu_profit_crawler_v5_5.py"
 UPLOAD_SCRIPT = BASE_DIR / "upload_realtime_snapshot.py"
 FEISHU_SCRIPT = BASE_DIR / "notify_feishu.py"
+XHS_REVIEW_SCRIPT = BASE_DIR / "xhs_review_weekly_job.py"
 
 
 def now_text() -> str:
@@ -337,6 +338,55 @@ def run_pipeline(reason: str, task: dict[str, object] | None = None, skip_login:
             pass
 
 
+def run_xhs_review_pipeline(task: dict[str, object]) -> int:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = str(task.get("id") or f"xhs-review-{datetime.now():%Y%m%d%H%M%S}")
+    log_file = LOG_DIR / f"xhs_review_{datetime.now():%Y%m%d_%H%M%S}_{run_id}.log"
+    port = str(task.get("port") or os.environ.get("XHS_REVIEW_PORT", "9227"))
+    max_images = str(task.get("max_images") or os.environ.get("XHS_REVIEW_MAX_IMAGES", "20"))
+
+    args = [
+        PYTHON,
+        str(XHS_REVIEW_SCRIPT),
+        "--port",
+        port,
+        "--send-images",
+        "--max-images",
+        max_images,
+    ]
+
+    update_status(
+        "running",
+        reason="xhs_review",
+        run_id=run_id,
+        step="xhs review image crawl",
+        message="正在抓取小红书带图评价素材",
+        log_file=str(log_file),
+    )
+    code = run_command("xhs review image crawl", args, log_file, max_attempts=1)
+    if code != 0:
+        message = f"小红书评价素材抓取失败，退出码 {code}"
+        update_status(
+            "failed",
+            reason="xhs_review",
+            run_id=run_id,
+            step="xhs review image crawl",
+            message=message,
+            log_file=str(log_file),
+        )
+        update_task(task, "failed", message=message)
+        return code
+
+    message = "小红书评价素材抓取完成，已按新增图片发送飞书通知"
+    update_status("success", reason="xhs_review", run_id=run_id, message=message, log_file=str(log_file))
+    update_task(task, "success", message=message)
+    state = load_local_state()
+    state["last_xhs_review_success_at"] = now_text()
+    state["last_task_id"] = task.get("id")
+    save_local_state(state)
+    return 0
+
+
 def parse_dt(value: object) -> datetime | None:
     if not value:
         return None
@@ -397,7 +447,7 @@ def poll_once() -> None:
         write_log(f"task poll failed: {exc}")
         task = None
 
-    if task and task.get("action") == "run_realtime":
+    if task and task.get("action") in {"run_realtime", "run_xhs_review_images"}:
         task_status = str(task.get("status") or "pending")
         task_id = str(task.get("id") or "")
         if (
@@ -412,7 +462,10 @@ def poll_once() -> None:
         if task_status in {"pending", "paused"} and task_id and state.get("last_task_id") != task_id:
             write_log(f"manual task accepted: {task_id}")
             update_task(task, "running", accepted_at=now_text())
-            run_pipeline("manual", task)
+            if task.get("action") == "run_xhs_review_images":
+                run_xhs_review_pipeline(task)
+            else:
+                run_pipeline("manual", task)
             return
 
     if should_run_scheduled(state):
