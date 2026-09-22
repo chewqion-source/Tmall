@@ -674,6 +674,7 @@ def _aggregate_period(data: pd.DataFrame, start_date: pd.Timestamp, end_date: pd
     if data.empty:
         return {
             "pay_amount": 0.0,
+            "average_order_value": 0.0,
             "sales_qty": 0.0,
             "order_count": 0.0,
             "profit": 0.0,
@@ -685,10 +686,12 @@ def _aggregate_period(data: pd.DataFrame, start_date: pd.Timestamp, end_date: pd
     rows = data[(data["date"] >= start_date) & (data["date"] <= end_date)]
     pay_amount = _sum_column(rows, "pay_amount")
     refund_amount = _sum_column(rows, "refund_amount")
+    order_count = float(rows["order_count"].sum())
     return {
         "pay_amount": pay_amount,
+        "average_order_value": pay_amount / order_count if order_count else 0.0,
         "sales_qty": float(rows["sales_qty"].sum()),
-        "order_count": float(rows["order_count"].sum()),
+        "order_count": order_count,
         "profit": float(rows["profit"].sum()),
         "refund_amount": refund_amount,
         "refund_rate": refund_amount / pay_amount if pay_amount else 0.0,
@@ -710,7 +713,17 @@ def _period_metrics(
     previous = _aggregate_period(data, prev_start, prev_end)
     deltas = {
         key: _metric_delta(current[key], previous[key])
-        for key in ["pay_amount", "sales_qty", "order_count", "profit", "refund_amount", "refund_rate", "roi", "products"]
+        for key in [
+            "pay_amount",
+            "average_order_value",
+            "sales_qty",
+            "order_count",
+            "profit",
+            "refund_amount",
+            "refund_rate",
+            "roi",
+            "products",
+        ]
     }
     return current, deltas
 
@@ -2121,6 +2134,7 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
     order_total = float(latest_rows["order_count"].sum())
     sales_total = float(latest_rows["sales_qty"].sum())
     profit_total = float(latest_rows["profit"].sum())
+    aov_total = pay_total / order_total if order_total else 0.0
     refund_rate = refund_total / pay_total if pay_total else 0.0
     roi_total = _net_roi(latest_rows)
 
@@ -2128,9 +2142,11 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
     if not previous_rows.empty:
         previous_pay = _sum_column(previous_rows, "pay_amount")
         previous_refund = _sum_column(previous_rows, "refund_amount")
+        previous_order = _sum_column(previous_rows, "order_count")
         previous_values = {
             "pay_amount": previous_pay,
-            "order_count": _sum_column(previous_rows, "order_count"),
+            "average_order_value": previous_pay / previous_order if previous_order else 0.0,
+            "order_count": previous_order,
             "sales_qty": _sum_column(previous_rows, "sales_qty"),
             "profit": _sum_column(previous_rows, "profit"),
             "refund_amount": previous_refund,
@@ -2140,9 +2156,10 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
     else:
         previous_values = {}
 
-    metric_cols = st.columns(7)
+    metric_cols = st.columns(8)
     cards = [
         ("支付金额", _format_money(pay_total), _hour_delta(pay_total, previous_values.get("pay_amount")), "neutral"),
+        ("客单价", _format_money(aov_total), _hour_delta(aov_total, previous_values.get("average_order_value")), "neutral"),
         ("订单数", f"{order_total:,.0f}", _hour_delta(order_total, previous_values.get("order_count")), "neutral"),
         ("件数", f"{sales_total:,.0f}", _hour_delta(sales_total, previous_values.get("sales_qty")), "neutral"),
         ("盈亏", _format_money(profit_total), _hour_delta(profit_total, previous_values.get("profit")), profit_tone(profit_total)),
@@ -2228,9 +2245,10 @@ def render_store_overview_section(
     custom_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
 ) -> None:
     current, deltas = _period_metrics(store_daily, trend_range, custom_range)
-    metric_cols = st.columns(7)
+    metric_cols = st.columns(8)
     cards = [
         ("支付金额", _format_money(current["pay_amount"]), deltas["pay_amount"], "neutral"),
+        ("客单价", _format_money(current["average_order_value"]), deltas["average_order_value"], "neutral"),
         ("订单数", f"{current['order_count']:,.0f}", deltas["order_count"], "neutral"),
         ("件数", f"{current['sales_qty']:,.0f}", deltas["sales_qty"], "neutral"),
         ("盈亏", _format_money(current["profit"]), deltas["profit"], profit_tone(current["profit"])),
@@ -2261,9 +2279,10 @@ def render_product_overview_section(
 ) -> None:
     current, deltas = _period_metrics(selected, trend_range, custom_range)
 
-    metric_cols = st.columns(7)
+    metric_cols = st.columns(8)
     cards = [
         ("支付金额", _format_money(current["pay_amount"]), deltas["pay_amount"], "neutral"),
+        ("客单价", _format_money(current["average_order_value"]), deltas["average_order_value"], "neutral"),
         ("订单数", f"{current['order_count']:,.0f}", deltas["order_count"], "neutral"),
         ("件数", f"{current['sales_qty']:,.0f}", deltas["sales_qty"], "neutral"),
         ("盈亏", _format_money(current["profit"]), deltas["profit"], profit_tone(current["profit"])),
