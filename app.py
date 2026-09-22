@@ -502,10 +502,69 @@ def _range_days(range_label: str) -> int:
     }.get(range_label, 30)
 
 
-def _period_window(data: pd.DataFrame, range_label: str) -> tuple[pd.Timestamp, pd.Timestamp]:
+def _available_date_bounds(data: pd.DataFrame) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    if data.empty or "date" not in data.columns:
+        return None
+    dates = pd.to_datetime(data["date"], errors="coerce").dropna()
+    if dates.empty:
+        return None
+    return dates.min().normalize(), dates.max().normalize()
+
+
+def _render_custom_date_range(
+    data: pd.DataFrame,
+    range_label: str,
+    key_prefix: str,
+) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    if range_label != "自定义":
+        return None
+    bounds = _available_date_bounds(data)
+    if bounds is None:
+        st.caption("暂无可选日期")
+        return None
+    min_date, max_date = bounds
+    default_start = max(min_date, max_date - pd.Timedelta(days=29))
+    start_value = st.session_state.get(f"{key_prefix}_start", default_start.date())
+    end_value = st.session_state.get(f"{key_prefix}_end", max_date.date())
+    cols = st.columns(2)
+    with cols[0]:
+        start_date = st.date_input(
+            "开始日期",
+            value=start_value,
+            min_value=min_date.date(),
+            max_value=max_date.date(),
+            key=f"{key_prefix}_start",
+        )
+    with cols[1]:
+        end_date = st.date_input(
+            "结束日期",
+            value=end_value,
+            min_value=min_date.date(),
+            max_value=max_date.date(),
+            key=f"{key_prefix}_end",
+        )
+    start_ts = pd.Timestamp(start_date).normalize()
+    end_ts = pd.Timestamp(end_date).normalize()
+    if start_ts > end_ts:
+        st.warning("开始日期不能晚于结束日期，已按反向区间计算。")
+        start_ts, end_ts = end_ts, start_ts
+    return start_ts, end_ts
+
+
+def _period_window(
+    data: pd.DataFrame,
+    range_label: str,
+    custom_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
     if data.empty:
         today = pd.Timestamp.today().normalize()
         return today, today
+    if range_label == "自定义" and custom_range is not None:
+        start_date = pd.Timestamp(custom_range[0]).normalize()
+        end_date = pd.Timestamp(custom_range[1]).normalize()
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+        return start_date, end_date
     latest_date = data["date"].max()
     days = _range_days(range_label)
     if range_label == "昨日":
@@ -611,8 +670,12 @@ def _aggregate_period(data: pd.DataFrame, start_date: pd.Timestamp, end_date: pd
     }
 
 
-def _period_metrics(data: pd.DataFrame, range_label: str) -> tuple[dict[str, float], dict[str, str]]:
-    start_date, end_date = _period_window(data, range_label)
+def _period_metrics(
+    data: pd.DataFrame,
+    range_label: str,
+    custom_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
+) -> tuple[dict[str, float], dict[str, str]]:
+    start_date, end_date = _period_window(data, range_label, custom_range)
     days = max((end_date - start_date).days + 1, 1)
     current = _aggregate_period(data, start_date, end_date)
     prev_end = start_date - pd.Timedelta(days=1)
@@ -1352,7 +1415,7 @@ def load_product_thumbnails(store: str) -> dict[str, str]:
     return thumbnails
 
 
-TREND_RANGE_OPTIONS = ("今日", "昨日", "3天", "7天", "15天", "近一个月", "近半年")
+TREND_RANGE_OPTIONS = ("今日", "昨日", "3天", "7天", "15天", "近一个月", "近半年", "自定义")
 CHART_CARD_MARGIN = dict(l=18, r=18, t=46, b=24)
 
 
@@ -1393,9 +1456,16 @@ def style_chart_card(fig: go.Figure, title: str, height: int) -> go.Figure:
     return fig
 
 
-def filter_trend_range(data: pd.DataFrame, range_label: str) -> pd.DataFrame:
+def filter_trend_range(
+    data: pd.DataFrame,
+    range_label: str,
+    custom_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
+) -> pd.DataFrame:
     latest_date = data["date"].max()
-    if range_label == "今日":
+    if range_label == "自定义" and custom_range is not None:
+        start_date, end_date = custom_range
+        filtered = data[(data["date"] >= start_date) & (data["date"] <= end_date)]
+    elif range_label == "今日":
         filtered = data[data["date"] == latest_date]
     elif range_label == "昨日":
         filtered = data[data["date"] == latest_date - pd.Timedelta(days=1)]
@@ -1467,7 +1537,7 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360)
             unsafe_allow_html=True,
         )
         return
-    data = data.sort_values("date").tail(60)
+    data = data.sort_values("date")
     width, chart_height, pad = 640, 280, 58
     sales_values = [float(value) for value in data["sales_qty"]]
     order_values = [float(value) for value in data["order_count"]]
@@ -1520,7 +1590,7 @@ def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360) -> No
             unsafe_allow_html=True,
         )
         return
-    data = data.sort_values("date").tail(60)
+    data = data.sort_values("date")
     values = [float(value) for value in data["profit"]]
     width, chart_height, pad = 640, 280, 58
     max_abs = max(max(abs(value) for value in values), 1.0)
@@ -2128,8 +2198,9 @@ def render_store_overview_section(
     store_daily: pd.DataFrame,
     trend_range: str,
     trend_store: pd.DataFrame,
+    custom_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
 ) -> None:
-    current, deltas = _period_metrics(store_daily, trend_range)
+    current, deltas = _period_metrics(store_daily, trend_range, custom_range)
     metric_cols = st.columns(7)
     cards = [
         ("支付金额", _format_money(current["pay_amount"]), deltas["pay_amount"], "neutral"),
@@ -2159,8 +2230,9 @@ def render_product_overview_section(
     latest: pd.Series,
     trend_range: str,
     trend_selected: pd.DataFrame,
+    custom_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
 ) -> None:
-    current, deltas = _period_metrics(selected, trend_range)
+    current, deltas = _period_metrics(selected, trend_range, custom_range)
 
     metric_cols = st.columns(7)
     cards = [
@@ -2251,6 +2323,8 @@ with store_filter_cols[0]:
 with store_filter_cols[1]:
     trend_range = st.selectbox("选择时间", TREND_RANGE_OPTIONS, index=5, key="store_trend_range")
 store_daily = all_daily[all_daily["store"] == selected_store].copy()
+with store_filter_cols[2]:
+    store_custom_range = _render_custom_date_range(store_daily, trend_range, "store_custom_range")
 complete = complete_daily_series(store_daily)
 summary = build_summary(store_daily, complete)
 products = summary["product_id"].tolist()
@@ -2260,8 +2334,8 @@ store_trend = (
     .agg(sales_qty=("sales_qty", "sum"), order_count=("order_count", "sum"), profit=("profit", "sum"))
     .sort_values("date", ignore_index=True)
 )
-trend_store = filter_trend_range(store_trend, trend_range)
-render_store_overview_section(selected_store, store_daily, trend_range, trend_store)
+trend_store = filter_trend_range(store_trend, trend_range, store_custom_range)
+render_store_overview_section(selected_store, store_daily, trend_range, trend_store, store_custom_range)
 
 st.markdown("## 商品概览")
 
@@ -2278,10 +2352,17 @@ if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
     )
 
 selected = complete[complete["product_id"] == selected_product].copy().sort_values("date")
-trend_selected = filter_trend_range(selected, product_trend_range)
+product_available_dates = store_daily[store_daily["product_id"].astype(str) == str(selected_product)].copy()
+with product_filter_cols[2]:
+    product_custom_range = _render_custom_date_range(
+        product_available_dates if not product_available_dates.empty else selected,
+        product_trend_range,
+        "product_custom_range",
+    )
+trend_selected = filter_trend_range(selected, product_trend_range, product_custom_range)
 selected_summary = summary[summary["product_id"] == selected_product].iloc[0]
 latest = selected.iloc[-1]
-render_product_overview_section(selected, selected_summary, latest, product_trend_range, trend_selected)
+render_product_overview_section(selected, selected_summary, latest, product_trend_range, trend_selected, product_custom_range)
 
 render_changes_table(selected)
 render_product_summary_table(summary, selected_store)
