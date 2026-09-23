@@ -28,11 +28,23 @@ from data_loader import (
     validate_known_sample,
 )
 from ui_helpers import ai_image_url, koc_url, roi_url, sidebar_link, upload_url
-from sku_cost_utils import merge_duplicate_sku_cost_rows, normalize_merchant_code
+import sku_cost_utils
+from sku_cost_utils import merge_duplicate_sku_cost_rows
 from fee_config_utils import FEE_CONFIG_HEADERS, load_fee_config_frame, save_fee_config_frame
 
 
 st.set_page_config(page_title="店铺数据", page_icon="📊", layout="wide")
+
+
+def _normalize_merchant_code_fallback(value: object) -> str:
+    text = " ".join(str(value or "").replace("\r", " ").replace("\n", " ").replace("\t", " ").split()).strip()
+    if not text:
+        return ""
+    compact = re.sub(r"\s+", "", text)
+    return re.sub(r"(?i)^kuku[\s\-_—–]*", "KUKU-", compact)
+
+
+normalize_merchant_code = getattr(sku_cost_utils, "normalize_merchant_code", _normalize_merchant_code_fallback)
 
 SKU_COST_HEADERS = [
     "店铺",
