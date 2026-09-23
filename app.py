@@ -8,12 +8,14 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import re
 import uuid
 from urllib.parse import quote
 
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from openpyxl import load_workbook
 import streamlit as st
 
 from data_loader import (
@@ -44,13 +46,25 @@ SKU_COST_HEADERS = [
     "首次发现日期",
     "最近成交日期",
 ]
+CATEGORY_MAPPING_HEADERS = [
+    "店铺",
+    "商品ID",
+    "商家编码",
+    "商品简称",
+    "一级品类",
+    "二级品类",
+    "是否启用",
+    "备注",
+]
 OLD_ZY_STORE_NAME = "坐拥" + "宁静"
 SHOP_NAME_ALIASES = {
     OLD_ZY_STORE_NAME: "坐拥_宁静",
 }
 DEFAULT_STORE_OPTIONS = ["易丽洁", "咖时光", "坐拥_宁静", "国货严选", "盲盒抖店", "盲盒千帆"]
+BLIND_BOX_CATEGORY_STORES = ["坐拥_宁静"]
 DATA_DIR = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
 SKU_COST_PATH = Path(os.environ.get("SKU_COST_FILE", DATA_DIR / "sku_cost.xlsx"))
+CATEGORY_MAPPING_PATH = Path(os.environ.get("CATEGORY_MAPPING_FILE", DATA_DIR / "category_mapping.xlsx"))
 FEE_CONFIG_PATH = Path(os.environ.get("FEE_CONFIG_FILE", DATA_DIR / "fee_config.xlsx"))
 REALTIME_SNAPSHOT_PATH = Path(
     os.environ.get("TMALL_REALTIME_FILE", DATA_DIR / "realtime" / "latest.json")
@@ -1046,6 +1060,319 @@ def sku_cost_download_bytes(data: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 
+def _empty_category_mapping_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=CATEGORY_MAPPING_HEADERS)
+
+
+def _normalize_category_sku_code(value: object) -> str:
+    return str(value or "").strip().upper().replace(" ", "")
+
+
+def load_category_mapping_frame(path: Path = CATEGORY_MAPPING_PATH) -> pd.DataFrame:
+    if not path.exists():
+        return _empty_category_mapping_frame()
+    data = pd.read_excel(path, dtype=str)
+    for column in CATEGORY_MAPPING_HEADERS:
+        if column not in data.columns:
+            data[column] = ""
+    data = data[CATEGORY_MAPPING_HEADERS].copy()
+    for column in CATEGORY_MAPPING_HEADERS:
+        data[column] = data[column].fillna("").astype(str).str.strip()
+    data = normalize_store_column(data)
+    data["是否启用"] = data["是否启用"].replace("", "是")
+    return data
+
+
+def save_category_mapping_frame(data: pd.DataFrame, path: Path = CATEGORY_MAPPING_PATH) -> Path | None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path = None
+    if path.exists():
+        backup_dir = path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / f"category_mapping_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+        backup_path.write_bytes(path.read_bytes())
+
+    cleaned = data.copy()
+    for column in CATEGORY_MAPPING_HEADERS:
+        if column not in cleaned.columns:
+            cleaned[column] = ""
+    cleaned = cleaned[CATEGORY_MAPPING_HEADERS]
+    for column in CATEGORY_MAPPING_HEADERS:
+        cleaned[column] = cleaned[column].fillna("").astype(str).str.strip()
+    cleaned = normalize_store_column(cleaned)
+    cleaned["是否启用"] = cleaned["是否启用"].replace("", "是")
+    has_key = cleaned["店铺"].ne("") & (
+        cleaned["商品ID"].ne("") | cleaned["商家编码"].ne("")
+    )
+    cleaned = cleaned[has_key].copy()
+    cleaned["_sku_norm"] = cleaned["商家编码"].map(_normalize_category_sku_code)
+    cleaned = cleaned.drop_duplicates(["店铺", "商品ID", "_sku_norm"], keep="last")
+    cleaned = cleaned.drop(columns=["_sku_norm"])
+    cleaned.to_excel(path, index=False, sheet_name="品类映射")
+    return backup_path
+
+
+def category_mapping_download_bytes(data: pd.DataFrame) -> bytes:
+    output = BytesIO()
+    data.to_excel(output, index=False, sheet_name="品类映射")
+    return output.getvalue()
+
+
+def _report_sheet_date(sheet_name: str, year: int) -> pd.Timestamp | None:
+    match = re.fullmatch(r"(\d{1,2})\.(\d{1,2})", str(sheet_name).strip())
+    if not match:
+        return None
+    return pd.Timestamp(year, int(match.group(1)), int(match.group(2)))
+
+
+def _infer_report_year(path: Path) -> int:
+    match = re.search(r"(20\d{2})", path.name)
+    return int(match.group(1)) if match else datetime.now().year
+
+
+def _number_from_cell(value: object) -> float:
+    if value is None or value == "":
+        return 0.0
+    try:
+        return float(str(value).replace(",", "").replace("¥", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _column_index(mapping: dict[str, int], *names: str) -> int | None:
+    for name in names:
+        if name in mapping:
+            return mapping[name]
+    return None
+
+
+def _workbook_rows_with_merges(path: Path) -> list[tuple[str, list[list[object]]]]:
+    workbook = load_workbook(path, data_only=True, read_only=False)
+    sheets: list[tuple[str, list[list[object]]]] = []
+    for worksheet in workbook.worksheets:
+        rows = [[cell.value for cell in row] for row in worksheet.iter_rows()]
+        for merged_range in worksheet.merged_cells.ranges:
+            min_col, min_row, max_col, max_row = merged_range.bounds
+            value = rows[min_row - 1][min_col - 1] if rows else None
+            for row_index in range(min_row - 1, max_row):
+                for col_index in range(min_col - 1, max_col):
+                    if row_index < len(rows) and col_index < len(rows[row_index]):
+                        rows[row_index][col_index] = value
+        sheets.append((worksheet.title, rows))
+    workbook.close()
+    return sheets
+
+
+def load_report_sku_detail(store: str, workbook_path: Path) -> pd.DataFrame:
+    year = _infer_report_year(workbook_path)
+    records: list[dict[str, object]] = []
+    for sheet_name, rows in _workbook_rows_with_merges(workbook_path):
+        sheet_date = _report_sheet_date(sheet_name, year)
+        if sheet_date is None:
+            continue
+        header_idx = None
+        columns: dict[str, int] | None = None
+        for index, row in enumerate(rows[:25]):
+            mapping = {
+                str(value).strip(): col_index
+                for col_index, value in enumerate(row)
+                if value is not None and str(value).strip()
+            }
+            if {"商品ID", "数量", "单品结余"}.issubset(mapping):
+                header_idx = index
+                columns = mapping
+                break
+        if header_idx is None or columns is None:
+            continue
+
+        product_col = columns["商品ID"]
+        sku_col = _column_index(columns, "货号", "商家编码")
+        qty_col = columns["数量"]
+        order_col = _column_index(columns, "订单数", "快递单量")
+        profit_col = columns["单品结余"]
+        pay_col = _column_index(columns, "支付金额")
+        refund_col = _column_index(columns, "成功退款金额", "成功退款金额(元)", "总退款金额")
+        ad_col = _column_index(columns, "推广花费", "推广花", "推广费", "投流托管花费", "投流推广花费")
+        cost_col = _column_index(columns, "货总价", "货品成本", "成本")
+
+        max_col = max(
+            col
+            for col in [
+                product_col,
+                sku_col,
+                qty_col,
+                order_col,
+                profit_col,
+                pay_col,
+                refund_col,
+                ad_col,
+                cost_col,
+            ]
+            if col is not None
+        )
+        for row_number, row in enumerate(rows[header_idx + 1 :], start=header_idx + 2):
+            if len(row) <= max_col:
+                continue
+            product_id = "" if row[product_col] is None else str(row[product_col]).strip()
+            sku_code = "" if sku_col is None or row[sku_col] is None else str(row[sku_col]).strip()
+            if not product_id and not sku_code:
+                continue
+            if product_id in {"合计", "总计", "小计"} or sku_code in {"合计", "总计", "小计"}:
+                continue
+
+            sales_qty = _number_from_cell(row[qty_col])
+            pay_amount = _number_from_cell(row[pay_col]) if pay_col is not None else 0.0
+            profit = _number_from_cell(row[profit_col])
+            if sales_qty == 0 and pay_amount == 0 and profit == 0:
+                continue
+
+            records.append(
+                {
+                    "store": normalize_store_name(store),
+                    "date": sheet_date,
+                    "sheet": sheet_name,
+                    "product_id": product_id,
+                    "sku_code": sku_code,
+                    "sku_norm": _normalize_category_sku_code(sku_code),
+                    "sales_qty": sales_qty,
+                    "order_count": _number_from_cell(row[order_col]) if order_col is not None else 0.0,
+                    "pay_amount": pay_amount,
+                    "refund_amount": _number_from_cell(row[refund_col]) if refund_col is not None else 0.0,
+                    "ad_cost_row": _number_from_cell(row[ad_col]) if ad_col is not None else 0.0,
+                    "goods_cost": _number_from_cell(row[cost_col]) if cost_col is not None else 0.0,
+                    "profit": profit,
+                    "source_row": row_number,
+                }
+            )
+    return pd.DataFrame(records)
+
+
+def build_category_mapping_candidates(store: str, workbook_path: Path) -> pd.DataFrame:
+    detail = load_report_sku_detail(store, workbook_path)
+    if detail.empty:
+        return pd.DataFrame(columns=CATEGORY_MAPPING_HEADERS)
+    candidates = (
+        detail.groupby(["store", "product_id", "sku_code", "sku_norm"], as_index=False)
+        .agg(
+            出现天数=("date", "nunique"),
+            明细行数=("source_row", "count"),
+            支付金额=("pay_amount", "sum"),
+            件数=("sales_qty", "sum"),
+        )
+        .sort_values(["支付金额", "件数"], ascending=False, ignore_index=True)
+    )
+    return pd.DataFrame(
+        {
+            "店铺": candidates["store"],
+            "商品ID": candidates["product_id"],
+            "商家编码": candidates["sku_code"],
+            "商品简称": "",
+            "一级品类": "",
+            "二级品类": "",
+            "是否启用": "是",
+            "备注": "",
+        }
+    )
+
+
+def merge_category_mapping_candidates(existing: pd.DataFrame, candidates: pd.DataFrame) -> pd.DataFrame:
+    if candidates.empty:
+        return existing.copy()
+    base = existing.copy()
+    for column in CATEGORY_MAPPING_HEADERS:
+        if column not in base.columns:
+            base[column] = ""
+    base = base[CATEGORY_MAPPING_HEADERS].copy()
+    base["_sku_norm"] = base["商家编码"].map(_normalize_category_sku_code)
+
+    additions = candidates.copy()
+    additions["_sku_norm"] = additions["商家编码"].map(_normalize_category_sku_code)
+    known = set(zip(base["店铺"], base["商品ID"], base["_sku_norm"]))
+    additions = additions[
+        ~additions.apply(lambda row: (row["店铺"], row["商品ID"], row["_sku_norm"]) in known, axis=1)
+    ]
+    merged = pd.concat([base, additions], ignore_index=True)
+    return merged.drop(columns=["_sku_norm"])
+
+
+def build_category_daily(
+    store: str,
+    workbook_path: Path,
+    category_mapping: pd.DataFrame,
+    product_daily: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    detail = load_report_sku_detail(store, workbook_path)
+    if detail.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    mapping = category_mapping.copy()
+    if mapping.empty:
+        mapping = _empty_category_mapping_frame()
+    for column in CATEGORY_MAPPING_HEADERS:
+        if column not in mapping.columns:
+            mapping[column] = ""
+    mapping = mapping[CATEGORY_MAPPING_HEADERS].copy()
+    mapping = normalize_store_column(mapping)
+    mapping = mapping[
+        (mapping["店铺"] == normalize_store_name(store))
+        & (mapping["是否启用"].fillna("").replace("", "是") != "否")
+    ].copy()
+    mapping["sku_norm"] = mapping["商家编码"].map(_normalize_category_sku_code)
+    mapping = mapping.drop_duplicates(["店铺", "商品ID", "sku_norm"], keep="last")
+    mapping = mapping.rename(columns={"店铺": "store", "商品ID": "product_id"})
+
+    detail = detail.merge(
+        mapping[["store", "product_id", "sku_norm", "商品简称", "一级品类", "二级品类"]],
+        on=["store", "product_id", "sku_norm"],
+        how="left",
+    )
+    detail["一级品类"] = detail["一级品类"].fillna("").replace("", "未分类")
+    detail["二级品类"] = detail["二级品类"].fillna("")
+    detail["商品简称"] = detail["商品简称"].fillna("")
+
+    category_product_pay = (
+        detail.groupby(["date", "product_id", "一级品类"], as_index=False)
+        .agg(category_product_pay=("pay_amount", "sum"))
+    )
+    product_pay = (
+        detail.groupby(["date", "product_id"], as_index=False)
+        .agg(product_pay=("pay_amount", "sum"))
+    )
+    ad_source = product_daily[product_daily["store"] == normalize_store_name(store)].copy()
+    ad_source = ad_source[["date", "product_id", "ad_cost"]].copy()
+    category_product_pay = category_product_pay.merge(product_pay, on=["date", "product_id"], how="left")
+    category_product_pay = category_product_pay.merge(ad_source, on=["date", "product_id"], how="left")
+    category_product_pay["ad_cost"] = pd.to_numeric(category_product_pay["ad_cost"], errors="coerce").fillna(0)
+    category_product_pay["pay_share"] = category_product_pay.apply(
+        lambda row: float(row["category_product_pay"]) / float(row["product_pay"])
+        if float(row.get("product_pay") or 0) > 0
+        else 0.0,
+        axis=1,
+    )
+    category_product_pay["allocated_ad_cost"] = category_product_pay["ad_cost"] * category_product_pay["pay_share"]
+
+    daily = (
+        detail.groupby(["date", "sheet", "一级品类"], as_index=False)
+        .agg(
+            pay_amount=("pay_amount", "sum"),
+            sales_qty=("sales_qty", "sum"),
+            order_count=("order_count", "sum"),
+            refund_amount=("refund_amount", "sum"),
+            goods_cost=("goods_cost", "sum"),
+            profit=("profit", "sum"),
+            sku_count=("sku_norm", "nunique"),
+            product_count=("product_id", "nunique"),
+        )
+    )
+    ad_by_category = (
+        category_product_pay.groupby(["date", "一级品类"], as_index=False)
+        .agg(ad_cost=("allocated_ad_cost", "sum"))
+    )
+    daily = daily.merge(ad_by_category, on=["date", "一级品类"], how="left")
+    daily["ad_cost"] = daily["ad_cost"].fillna(0)
+    return daily.sort_values(["date", "一级品类"], ignore_index=True), detail
+
+
 def save_fee_config_with_backup(data: pd.DataFrame, path: Path = FEE_CONFIG_PATH) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     backup_path = None
@@ -1764,6 +2091,129 @@ def render_sku_cost_manager() -> None:
             "下载成本表",
             data=sku_cost_download_bytes(data),
             file_name="sku_cost.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+        )
+
+
+def render_category_mapping_manager() -> None:
+    st.title("品类映射维护")
+    st.caption(f"当前文件：{CATEGORY_MAPPING_PATH}")
+    st.info("当前先接入坐拥_宁静。这里使用财务日报明细，不使用实时抓取数据。")
+
+    try:
+        sources = find_store_workbooks()
+    except Exception as exc:
+        sources = {}
+        st.warning(f"读取日报文件列表失败：{exc}")
+
+    stores = [store for store in BLIND_BOX_CATEGORY_STORES if store in sources]
+    if not stores:
+        st.warning("当前没有找到坐拥_宁静日报文件，无法自动生成映射候选。")
+        stores = BLIND_BOX_CATEGORY_STORES
+
+    selected_store = st.selectbox("店铺", stores, index=0)
+    existing = load_category_mapping_frame()
+    candidates = pd.DataFrame(columns=CATEGORY_MAPPING_HEADERS)
+    if selected_store in sources:
+        try:
+            candidates = build_category_mapping_candidates(selected_store, sources[selected_store])
+        except Exception as exc:
+            st.error(f"解析日报失败：{exc}")
+
+    merged = merge_category_mapping_candidates(existing, candidates)
+    view = merged[merged["店铺"] == selected_store].copy()
+    missing_category = view["一级品类"].fillna("").astype(str).str.strip().eq("")
+    existing_store_count = len(existing[existing["店铺"] == selected_store]) if not existing.empty else 0
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("可映射 SKU", f"{len(view):,.0f}")
+    metric_cols[1].metric("已填品类", f"{len(view) - int(missing_category.sum()):,.0f}")
+    metric_cols[2].metric("待填品类", f"{int(missing_category.sum()):,.0f}")
+    metric_cols[3].metric("日报新增候选", f"{max(len(view) - existing_store_count, 0):,.0f}")
+
+    filter_cols = st.columns([1, 1.2, 1])
+    with filter_cols[0]:
+        only_missing = st.toggle("只看待填品类", value=False)
+    with filter_cols[1]:
+        keyword = st.text_input("搜索商品ID / 商家编码 / 商品简称")
+    with filter_cols[2]:
+        batch_category = st.text_input("批量填写一级品类")
+
+    view["_row_id"] = view.index
+    if only_missing:
+        view = view[view["一级品类"].fillna("").astype(str).str.strip().eq("")]
+    if keyword:
+        query = keyword.strip()
+        view = view[
+            view["商品ID"].str.contains(query, case=False, na=False)
+            | view["商家编码"].str.contains(query, case=False, na=False)
+            | view["商品简称"].str.contains(query, case=False, na=False)
+            | view["一级品类"].str.contains(query, case=False, na=False)
+            | view["二级品类"].str.contains(query, case=False, na=False)
+        ]
+
+    action_cols = st.columns([1, 1, 4])
+    with action_cols[0]:
+        if st.button("批量填写当前筛选", type="secondary", width="stretch"):
+            target_ids = view["_row_id"].dropna().astype(int).tolist()
+            if not target_ids:
+                st.warning("当前筛选没有可填写的行。")
+            elif not batch_category.strip():
+                st.warning("请先输入要批量填写的一级品类。")
+            else:
+                save_data = merged.copy()
+                save_data.loc[target_ids, "一级品类"] = batch_category.strip()
+                save_category_mapping_frame(save_data)
+                st.success(f"已批量填写 {len(target_ids)} 行。")
+                st.rerun()
+
+    st.caption("建议按 商品ID + 商家编码 维护品类。保存后，店铺与商品页面会按日报明细重新汇总品类。")
+    edited = st.data_editor(
+        view[CATEGORY_MAPPING_HEADERS + ["_row_id"]],
+        hide_index=True,
+        num_rows="dynamic",
+        width="stretch",
+        disabled=["_row_id"],
+        column_config={
+            "店铺": st.column_config.SelectboxColumn("店铺", options=BLIND_BOX_CATEGORY_STORES),
+            "商品ID": st.column_config.TextColumn("商品ID"),
+            "商家编码": st.column_config.TextColumn("商家编码"),
+            "商品简称": st.column_config.TextColumn("商品简称"),
+            "一级品类": st.column_config.TextColumn("一级品类"),
+            "二级品类": st.column_config.TextColumn("二级品类"),
+            "是否启用": st.column_config.SelectboxColumn("是否启用", options=["是", "否"]),
+            "备注": st.column_config.TextColumn("备注"),
+            "_row_id": None,
+        },
+        key="category_mapping_editor",
+    )
+
+    save_cols = st.columns([1, 1, 4])
+    with save_cols[0]:
+        if st.button("保存品类映射", type="primary", width="stretch"):
+            save_data = merged.copy()
+            edited_existing = edited[pd.to_numeric(edited["_row_id"], errors="coerce").notna()].copy()
+            edited_new = edited[pd.to_numeric(edited["_row_id"], errors="coerce").isna()].copy()
+            for _, row in edited_existing.iterrows():
+                row_id = int(row["_row_id"])
+                if row_id in save_data.index:
+                    save_data.loc[row_id, CATEGORY_MAPPING_HEADERS] = row[CATEGORY_MAPPING_HEADERS].to_list()
+            if not edited_new.empty:
+                save_data = pd.concat(
+                    [save_data, edited_new[CATEGORY_MAPPING_HEADERS]],
+                    ignore_index=True,
+                )
+            backup_path = save_category_mapping_frame(save_data)
+            st.success(
+                "保存成功。"
+                + (f" 已备份旧文件：{backup_path.name}" if backup_path else "")
+            )
+            st.rerun()
+    with save_cols[1]:
+        st.download_button(
+            "下载映射表",
+            data=category_mapping_download_bytes(merged),
+            file_name="category_mapping.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch",
         )
@@ -2789,6 +3239,126 @@ def render_store_overview_section(
         render_chart_with_fullscreen("profit", "store_profit", "盈亏柱状趋势图", trend_store, height=300)
 
 
+def render_category_overview_section(
+    selected_store: str,
+    workbook_path: Path | None,
+    all_daily: pd.DataFrame,
+    trend_range: str,
+    custom_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
+) -> None:
+    if selected_store not in BLIND_BOX_CATEGORY_STORES:
+        return
+    st.markdown("## 品类概览")
+    st.caption("基于财务日报明细统计，不使用实时抓取数据。当前先接入坐拥_宁静。")
+    if workbook_path is None:
+        st.warning("没有找到该店铺日报，暂时无法统计品类。")
+        return
+    try:
+        category_daily, detail = build_category_daily(
+            selected_store,
+            workbook_path,
+            load_category_mapping_frame(),
+            all_daily,
+        )
+    except Exception as exc:
+        st.error(f"品类统计失败：{exc}")
+        return
+    if category_daily.empty:
+        st.warning("日报里没有可统计的 SKU 明细。")
+        return
+
+    start_date, end_date = _period_window(category_daily, trend_range, custom_range)
+    period_rows = category_daily[
+        (category_daily["date"] >= start_date) & (category_daily["date"] <= end_date)
+    ].copy()
+    if period_rows.empty:
+        period_rows = category_daily.tail(1).copy()
+
+    category_summary = (
+        period_rows.groupby("一级品类", as_index=False)
+        .agg(
+            支付金额=("pay_amount", "sum"),
+            订单数=("order_count", "sum"),
+            件数=("sales_qty", "sum"),
+            退款金额=("refund_amount", "sum"),
+            推广费=("ad_cost", "sum"),
+            货品成本=("goods_cost", "sum"),
+            盈亏=("profit", "sum"),
+            SKU数=("sku_count", "max"),
+            商品数=("product_count", "max"),
+        )
+        .sort_values("支付金额", ascending=False, ignore_index=True)
+    )
+    category_summary["退款率"] = category_summary.apply(
+        lambda row: row["退款金额"] / row["支付金额"] if row["支付金额"] else 0.0,
+        axis=1,
+    )
+    category_summary["ROI"] = category_summary.apply(
+        lambda row: row["盈亏"] / row["推广费"] if row["推广费"] else 0.0,
+        axis=1,
+    )
+
+    unmapped_keys = detail[detail["一级品类"].eq("未分类")][["product_id", "sku_norm"]].drop_duplicates()
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("品类数", f"{category_summary['一级品类'].nunique():,.0f}")
+    metric_cols[1].metric("统计 SKU", f"{detail[['product_id', 'sku_norm']].drop_duplicates().shape[0]:,.0f}")
+    metric_cols[2].metric("未分类 SKU", f"{len(unmapped_keys):,.0f}")
+    metric_cols[3].metric("品类总盈亏", _format_money(float(category_summary["盈亏"].sum())))
+
+    chart_cols = st.columns([1, 1])
+    with chart_cols[0]:
+        chart_data = category_summary.sort_values("支付金额", ascending=True)
+        fig = go.Figure(
+            go.Bar(
+                x=chart_data["支付金额"],
+                y=chart_data["一级品类"],
+                orientation="h",
+                marker_color="#0ea5e9",
+                text=[_format_money(float(value)) for value in chart_data["支付金额"]],
+                textposition="outside",
+                hovertemplate="品类 %{y}<br>支付 %{x:,.2f}<extra></extra>",
+            )
+        )
+        style_chart_card(fig, "品类支付金额排行", 300)
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+    with chart_cols[1]:
+        chart_data = category_summary.sort_values("盈亏", ascending=True)
+        colors = ["#16a34a" if value >= 0 else "#dc2626" for value in chart_data["盈亏"]]
+        fig = go.Figure(
+            go.Bar(
+                x=chart_data["盈亏"],
+                y=chart_data["一级品类"],
+                orientation="h",
+                marker_color=colors,
+                text=[_format_money(float(value)) for value in chart_data["盈亏"]],
+                textposition="outside",
+                hovertemplate="品类 %{y}<br>盈亏 %{x:,.2f}<extra></extra>",
+            )
+        )
+        style_chart_card(fig, "品类盈亏排行", 300)
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+    table = category_summary[
+        ["一级品类", "支付金额", "订单数", "件数", "退款金额", "退款率", "推广费", "货品成本", "盈亏", "ROI", "SKU数", "商品数"]
+    ].copy()
+    styled = table.style.map(color_profit, subset=["盈亏"]).format(
+        {
+            "支付金额": "¥{:,.2f}",
+            "订单数": "{:,.0f}",
+            "件数": "{:,.0f}",
+            "退款金额": "¥{:,.2f}",
+            "退款率": "{:.1%}",
+            "推广费": "¥{:,.2f}",
+            "货品成本": "¥{:,.2f}",
+            "盈亏": "¥{:,.2f}",
+            "ROI": "{:.2f}",
+            "SKU数": "{:,.0f}",
+            "商品数": "{:,.0f}",
+        }
+    )
+    st.dataframe(styled, width="stretch", hide_index=True)
+
+
 def render_product_overview_section(
     selected: pd.DataFrame,
     selected_summary: pd.Series,
@@ -2828,7 +3398,10 @@ def render_product_overview_section(
 with st.sidebar:
     st.header("运营数据看板")
     page_param = str(st.query_params.get("page", "dashboard"))
-    page_mode = "SKU成本维护" if page_param == "sku-cost" else "日报看板"
+    page_mode = {
+        "sku-cost": "SKU成本维护",
+        "category-map": "品类映射",
+    }.get(page_param, "日报看板")
     if st.button(
         "店铺与商品",
         type="primary" if page_mode == "日报看板" else "secondary",
@@ -2843,6 +3416,13 @@ with st.sidebar:
     ):
         st.query_params["page"] = "sku-cost"
         st.rerun()
+    if st.button(
+        "品类映射",
+        type="primary" if page_mode == "品类映射" else "secondary",
+        width=168,
+    ):
+        st.query_params["page"] = "category-map"
+        st.rerun()
     sidebar_link("财务报表上传", upload_url())
     sidebar_link("投产计算器", roi_url())
     sidebar_link("达人管理", koc_url())
@@ -2852,6 +3432,9 @@ inject_dashboard_styles()
 
 if page_mode == "SKU成本维护":
     render_sku_cost_manager()
+    st.stop()
+if page_mode == "品类映射":
+    render_category_mapping_manager()
     st.stop()
 
 try:
@@ -2911,6 +3494,13 @@ store_trend = (
 )
 trend_store = filter_trend_range(store_trend, trend_range, store_custom_range)
 render_store_overview_section(selected_store, store_daily, trend_range, trend_store, store_custom_range)
+render_category_overview_section(
+    selected_store,
+    sources.get(selected_store),
+    all_daily,
+    trend_range,
+    store_custom_range,
+)
 
 st.markdown("## 商品概览")
 
