@@ -9,6 +9,7 @@ import mimetypes
 import os
 from pathlib import Path
 import uuid
+from urllib.parse import quote
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -34,6 +35,7 @@ st.set_page_config(page_title="店铺数据", page_icon="📊", layout="wide")
 SKU_COST_HEADERS = [
     "店铺",
     "商品ID",
+    "商品简称",
     "商家编码",
     "SKU规格",
     "单件货价",
@@ -199,6 +201,136 @@ def inject_dashboard_styles() -> None:
 .metric-chart-gap {
     height: 18px;
 }
+.agent-status-pill {
+    position: fixed;
+    right: 64px;
+    top: 20px;
+    z-index: 2147483000;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 13px;
+    border: 1px solid #dbe3ef;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .96);
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, .12);
+    backdrop-filter: blur(8px);
+    max-width: 360px;
+    overflow: hidden;
+}
+.agent-status-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: #94a3b8;
+}
+.agent-status-pill.good .agent-status-dot {
+    background: #16a34a;
+}
+.agent-status-pill.good {
+    border-color: #bbf7d0;
+    color: #166534;
+}
+.agent-status-pill.warn .agent-status-dot {
+    background: #f59e0b;
+}
+.agent-status-pill.warn {
+    border-color: #fed7aa;
+    color: #92400e;
+}
+.agent-status-pill.bad .agent-status-dot {
+    background: #dc2626;
+}
+.agent-status-pill.bad {
+    border-color: #fecaca;
+    color: #991b1b;
+}
+.alert-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+    margin: 12px 0 18px;
+}
+.alert-card {
+    position: relative;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    padding: 13px 14px 13px 42px;
+    box-shadow: 0 10px 26px rgba(15, 23, 42, .06);
+    overflow: hidden;
+}
+.alert-card:before {
+    content: "";
+    position: absolute;
+    left: 14px;
+    top: 17px;
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: #94a3b8;
+}
+.alert-card.warn {
+    border-color: #fed7aa;
+    background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+}
+.alert-card.warn:before {
+    background: #f59e0b;
+}
+.alert-card.bad {
+    border-color: #fecaca;
+    background: linear-gradient(180deg, #fef2f2 0%, #ffffff 100%);
+}
+.alert-card.bad:before {
+    background: #dc2626;
+}
+.alert-card.good {
+    border-color: #bbf7d0;
+    background: linear-gradient(180deg, #ecfdf5 0%, #ffffff 100%);
+}
+.alert-card.good:before {
+    background: #16a34a;
+}
+.alert-title {
+    color: #0f172a;
+    font-size: 13px;
+    font-weight: 760;
+    margin-bottom: 6px;
+}
+.alert-text {
+    color: #475569;
+    font-size: 12px;
+    line-height: 1.35;
+}
+.chart-icon-link {
+    position: absolute;
+    right: 12px;
+    top: 12px;
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .86);
+    border: 1px solid #dbe3ef;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, .10);
+    color: #475569;
+    text-decoration: none;
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1;
+}
+.chart-icon-link:hover {
+    border-color: #94a3b8;
+    color: #0f172a;
+    background: #ffffff;
+}
 .store-profit-strip {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -356,6 +488,7 @@ def inject_dashboard_styles() -> None:
     font-variant-numeric: tabular-nums;
 }
 .svg-chart-card {
+    position: relative;
     background: #f3f4f6;
     border-radius: 8px;
     padding: 18px 16px 12px;
@@ -509,13 +642,9 @@ def render_store_button_filter(stores: list[str], key_prefix: str = "store_selec
 
 def _range_days(range_label: str) -> int:
     return {
-        "今日": 1,
         "昨日": 1,
-        "3天": 3,
-        "7天": 7,
-        "15天": 15,
-        "近一个月": 30,
-        "近半年": 183,
+        "近7天": 7,
+        "近30天": 30,
     }.get(range_label, 30)
 
 
@@ -539,6 +668,12 @@ def _default_date_range_for_label(
     if range_label == "昨日":
         end_date = max(min_date, max_date - pd.Timedelta(days=1))
         start_date = end_date
+    elif range_label == "周":
+        end_date = max_date
+        start_date = max(min_date, max_date - pd.Timedelta(days=int(max_date.weekday())))
+    elif range_label == "月":
+        end_date = max_date
+        start_date = max(min_date, pd.Timestamp(year=max_date.year, month=max_date.month, day=1))
     else:
         days = _range_days(range_label)
         end_date = max_date
@@ -551,6 +686,8 @@ def _render_date_range_controls(
     range_label: str,
     key_prefix: str,
 ) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    if range_label != "自定义":
+        return None
     bounds = _available_date_bounds(data)
     if bounds is None:
         st.caption("暂无可选日期")
@@ -595,6 +732,33 @@ def _render_date_range_controls(
     return start_ts, end_ts
 
 
+def _render_time_range_selector(
+    data: pd.DataFrame,
+    key_prefix: str,
+    default: str = "近30天",
+) -> tuple[str, tuple[pd.Timestamp, pd.Timestamp] | None]:
+    range_key = f"{key_prefix}_range"
+    if range_key not in st.session_state or st.session_state[range_key] not in TREND_RANGE_OPTIONS:
+        st.session_state[range_key] = default
+
+    selected = str(st.session_state[range_key])
+    st.caption("选择时间")
+    option_columns = st.columns([0.85, 0.95, 1.05, 0.65, 0.65, 1.05])
+    for index, option in enumerate(TREND_RANGE_OPTIONS):
+        with option_columns[index]:
+            if st.button(
+                option,
+                key=f"{key_prefix}_range_{index}",
+                type="primary" if selected == option else "secondary",
+                width="stretch",
+            ):
+                st.session_state[range_key] = option
+                selected = option
+                st.rerun()
+    custom_range = _render_date_range_controls(data, selected, f"{key_prefix}_custom")
+    return selected, custom_range
+
+
 def _period_window(
     data: pd.DataFrame,
     range_label: str,
@@ -614,6 +778,12 @@ def _period_window(
     if range_label == "昨日":
         end_date = latest_date - pd.Timedelta(days=1)
         start_date = end_date
+    elif range_label == "周":
+        end_date = latest_date
+        start_date = latest_date - pd.Timedelta(days=int(latest_date.weekday()))
+    elif range_label == "月":
+        end_date = latest_date
+        start_date = pd.Timestamp(year=latest_date.year, month=latest_date.month, day=1)
     else:
         end_date = latest_date
         start_date = latest_date - pd.Timedelta(days=days - 1)
@@ -822,14 +992,14 @@ def load_sku_cost_frame(path: Path = SKU_COST_PATH) -> pd.DataFrame:
     if not path.exists():
         return _empty_sku_cost_frame()
 
-    data = pd.read_excel(path, dtype={"店铺": str, "商品ID": str, "商家编码": str, "SKU规格": str})
+    data = pd.read_excel(path, dtype={"店铺": str, "商品ID": str, "商品简称": str, "商家编码": str, "SKU规格": str})
     for column in SKU_COST_HEADERS:
         if column not in data.columns:
             data[column] = ""
     data = data[SKU_COST_HEADERS].copy()
     for column in ["单件货价", "快递费"]:
         data[column] = pd.to_numeric(data[column], errors="coerce")
-    for column in ["店铺", "商品ID", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
+    for column in ["店铺", "商品ID", "商品简称", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
         data[column] = data[column].fillna("").astype(str)
     return normalize_store_column(data)
 
@@ -848,7 +1018,7 @@ def save_sku_cost_frame(data: pd.DataFrame, path: Path = SKU_COST_PATH) -> Path 
         if column not in cleaned.columns:
             cleaned[column] = ""
     cleaned = cleaned[SKU_COST_HEADERS]
-    for column in ["店铺", "商品ID", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
+    for column in ["店铺", "商品ID", "商品简称", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
         cleaned[column] = cleaned[column].fillna("").astype(str).str.strip()
     cleaned = normalize_store_column(cleaned)
     for column in ["单件货价", "快递费"]:
@@ -944,6 +1114,129 @@ def render_realtime_agent_panel() -> None:
             write_json_file(REALTIME_TASK_PATH, task_payload)
             st.success("已派发抓取任务，本地守护进程会在约 30 秒内接收。")
             st.rerun()
+
+
+def _parse_datetime(value: object) -> pd.Timestamp | None:
+    if not value:
+        return None
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return pd.Timestamp(parsed)
+
+
+def render_agent_status_light(status: dict[str, object], generated_at: str | None) -> None:
+    status_text = str(status.get("status") or "unknown")
+    updated_at = str(status.get("updated_at") or generated_at or "")
+    labels = {
+        "idle": "守护在线",
+        "checking_login": "检查登录",
+        "running": "抓取中",
+        "success": "最近成功",
+        "failed": "抓取失败",
+        "paused": "已暂停",
+        "error": "异常",
+        "stopped": "已停止",
+        "unknown": "未连接",
+    }
+    tone = "good" if status_text in {"idle", "success"} else "warn" if status_text in {"checking_login", "running", "paused"} else "bad"
+    detail = status.get("step") or status.get("message") or updated_at or "暂无状态"
+    if isinstance(detail, str) and len(detail) > 28:
+        detail = f"{detail[:28]}..."
+    st.markdown(
+        f"""
+<div class="agent-status-pill {tone}">
+  <span class="agent-status-dot"></span>
+  <span>抓取状态：{escape(labels.get(status_text, status_text))}</span>
+  <span>{escape(str(detail))}</span>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_exception_alerts(
+    realtime_daily: pd.DataFrame,
+    all_daily: pd.DataFrame,
+    status: dict[str, object],
+    generated_at: str | None,
+) -> None:
+    source = realtime_daily if not realtime_daily.empty else all_daily
+    alerts: list[tuple[str, str, str]] = []
+
+    status_text = str(status.get("status") or "unknown")
+    if status_text in {"failed", "error", "paused", "stopped"}:
+        alerts.append(("bad", "抓取状态异常", str(status.get("message") or status.get("step") or status_text)))
+
+    generated_ts = _parse_datetime(generated_at)
+    if generated_ts is not None:
+        now_ts = pd.Timestamp.now(tz=generated_ts.tz) if generated_ts.tz is not None else pd.Timestamp.now()
+        age_hours = (now_ts - generated_ts).total_seconds() / 3600
+        if age_hours >= 3:
+            alerts.append(("warn", "实时数据偏旧", f"距离上次更新约 {age_hours:.1f} 小时"))
+
+    if not source.empty and {"date", "store"}.issubset(source.columns):
+        latest_date = source["date"].max()
+        latest_rows = source[source["date"] == latest_date].copy()
+        if not latest_rows.empty:
+            store_summary = (
+                latest_rows.groupby("store", as_index=False)
+                .agg(
+                    pay_amount=("pay_amount", "sum"),
+                    profit=("profit", "sum"),
+                    refund_amount=("refund_amount", "sum"),
+                    ad_cost=("ad_cost", "sum"),
+                )
+                .copy()
+            )
+            loss_rows = store_summary[store_summary["profit"] < 0].sort_values("profit").head(2)
+            if not loss_rows.empty:
+                text = "；".join(f"{row['store']} {_format_money(float(row['profit']))}" for _, row in loss_rows.iterrows())
+                alerts.append(("bad", "亏损店铺", text))
+
+            refund_rows = store_summary[
+                (store_summary["pay_amount"] > 0)
+                & (store_summary["refund_amount"] / store_summary["pay_amount"] >= 0.2)
+            ].sort_values("refund_amount", ascending=False).head(2)
+            if not refund_rows.empty:
+                text = "；".join(
+                    f"{row['store']} 退款率 {float(row['refund_amount']) / float(row['pay_amount']):.1%}"
+                    for _, row in refund_rows.iterrows()
+                )
+                alerts.append(("warn", "退款偏高", text))
+
+            ad_rows = store_summary[
+                (store_summary["pay_amount"] > 0)
+                & (store_summary["ad_cost"] / store_summary["pay_amount"] >= 0.3)
+            ].sort_values("ad_cost", ascending=False).head(2)
+            if not ad_rows.empty:
+                text = "；".join(
+                    f"{row['store']} 推广占比 {float(row['ad_cost']) / float(row['pay_amount']):.1%}"
+                    for _, row in ad_rows.iterrows()
+                )
+                alerts.append(("warn", "推广占比偏高", text))
+
+    sku_cost = load_sku_cost_frame()
+    if not sku_cost.empty:
+        price_missing = pd.to_numeric(sku_cost["单件货价"], errors="coerce").isna()
+        freight_missing = pd.to_numeric(sku_cost["快递费"], errors="coerce").isna()
+        missing_cost_count = int((price_missing | freight_missing).sum())
+        if missing_cost_count > 0:
+            alerts.append(("warn", "SKU成本待补", f"维护表还有 {missing_cost_count} 条成本或快递费待补"))
+
+    if not alerts:
+        alerts.append(("good", "今日暂无明显异常", "抓取状态、亏损、退款和推广占比未触发预警"))
+
+    cards = "".join(
+        f"""
+<div class="alert-card {tone}">
+  <div class="alert-title">{escape(title)}</div>
+  <div class="alert-text">{escape(text)}</div>
+</div>
+"""
+        for tone, title, text in alerts[:5]
+    )
+    st.markdown(f'<div class="alert-grid">{cards}</div>', unsafe_allow_html=True)
 
 
 def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.DataFrame, str | None]:
@@ -1333,7 +1626,7 @@ def render_sku_cost_manager() -> None:
 
     uploaded = st.file_uploader("导入现有 sku_cost.xlsx", type=["xlsx"])
     if uploaded is not None:
-        imported = pd.read_excel(uploaded, dtype={"店铺": str, "商品ID": str, "商家编码": str, "SKU规格": str})
+        imported = pd.read_excel(uploaded, dtype={"店铺": str, "商品ID": str, "商品简称": str, "商家编码": str, "SKU规格": str})
         backup_path = save_sku_cost_frame(imported)
         st.success(
             "已导入并保存。"
@@ -1353,7 +1646,7 @@ def render_sku_cost_manager() -> None:
     with filter_cols[0]:
         selected_store = st.selectbox("店铺筛选", ["全部"] + stores)
     with filter_cols[1]:
-        keyword = st.text_input("搜索商品ID / 商家编码 / SKU规格")
+        keyword = st.text_input("搜索商品简称 / 商品ID / 商家编码 / SKU规格")
     with filter_cols[2]:
         only_missing = st.toggle("只看待补成本", value=False)
 
@@ -1365,6 +1658,7 @@ def render_sku_cost_manager() -> None:
         query = keyword.strip()
         view = view[
             view["商品ID"].str.contains(query, case=False, na=False)
+            | view["商品简称"].str.contains(query, case=False, na=False)
             | view["商家编码"].str.contains(query, case=False, na=False)
             | view["SKU规格"].str.contains(query, case=False, na=False)
         ]
@@ -1376,9 +1670,12 @@ def render_sku_cost_manager() -> None:
 
     batch_cols = st.columns([1, 1, 1, 1.2])
     with batch_cols[0]:
-        batch_column = st.selectbox("\u6279\u91cf\u5b57\u6bb5", ["\u5feb\u9012\u8d39", "\u5355\u4ef6\u8d27\u4ef7"])
+        batch_column = st.selectbox("\u6279\u91cf\u5b57\u6bb5", ["\u5feb\u9012\u8d39", "\u5355\u4ef6\u8d27\u4ef7", "\u5546\u54c1\u7b80\u79f0"])
     with batch_cols[1]:
-        batch_value = st.number_input("\u6279\u91cf\u91d1\u989d", min_value=0.0, value=3.7, step=0.1, format="%.2f")
+        if batch_column == "\u5546\u54c1\u7b80\u79f0":
+            batch_value = st.text_input("\u6279\u91cf\u586b\u5199\u5185\u5bb9", placeholder="\u4f8b\uff1a\u91d1\u5c5e\u978b\u67b6")
+        else:
+            batch_value = st.number_input("\u6279\u91cf\u91d1\u989d", min_value=0.0, value=3.7, step=0.1, format="%.2f")
     with batch_cols[2]:
         batch_scope = st.selectbox("\u586b\u5199\u8303\u56f4", ["\u53ea\u586b\u7a7a\u503c", "\u8986\u76d6\u5f53\u524d\u7b5b\u9009"])
     with batch_cols[3]:
@@ -1392,12 +1689,21 @@ def render_sku_cost_manager() -> None:
                 save_data = data.copy()
                 target_mask = save_data.index.isin(target_ids)
                 if batch_scope == "\u53ea\u586b\u7a7a\u503c":
-                    target_mask = target_mask & save_data[batch_column].isna()
+                    if batch_column == "\u5546\u54c1\u7b80\u79f0":
+                        empty_mask = save_data[batch_column].fillna("").astype(str).str.strip().eq("")
+                    else:
+                        empty_mask = save_data[batch_column].isna()
+                    target_mask = target_mask & empty_mask
                 changed = int(target_mask.sum())
                 if changed == 0:
                     st.info("\u5f53\u524d\u7b5b\u9009\u91cc\u6ca1\u6709\u9700\u8981\u586b\u5199\u7684\u7a7a\u503c\u3002")
+                elif batch_column == "\u5546\u54c1\u7b80\u79f0" and not str(batch_value).strip():
+                    st.warning("\u8bf7\u5148\u586b\u5199\u5546\u54c1\u7b80\u79f0\u5185\u5bb9\u3002")
                 else:
-                    save_data.loc[target_mask, batch_column] = round(float(batch_value), 2)
+                    if batch_column == "\u5546\u54c1\u7b80\u79f0":
+                        save_data.loc[target_mask, batch_column] = str(batch_value).strip()
+                    else:
+                        save_data.loc[target_mask, batch_column] = round(float(batch_value), 2)
                     backup_path = save_sku_cost_frame(save_data)
                     st.success(
                         f"\u5df2\u6279\u91cf\u586b\u5199 {changed} \u884c {batch_column}\u3002"
@@ -1414,6 +1720,7 @@ def render_sku_cost_manager() -> None:
         column_config={
             "店铺": st.column_config.SelectboxColumn("店铺", options=stores),
             "商品ID": st.column_config.TextColumn("商品ID"),
+            "商品简称": st.column_config.TextColumn("商品简称"),
             "商家编码": st.column_config.TextColumn("商家编码"),
             "SKU规格": st.column_config.TextColumn("SKU规格"),
             "单件货价": st.column_config.NumberColumn("单件货价", min_value=0, step=0.01, format="¥%.2f"),
@@ -1490,7 +1797,7 @@ def load_product_thumbnails(store: str) -> dict[str, str]:
     return thumbnails
 
 
-TREND_RANGE_OPTIONS = ("今日", "昨日", "3天", "7天", "15天", "近一个月", "近半年")
+TREND_RANGE_OPTIONS = ("昨日", "近7天", "近30天", "周", "月", "自定义")
 CHART_CARD_MARGIN = dict(l=18, r=18, t=46, b=24)
 
 
@@ -1540,19 +1847,20 @@ def filter_trend_range(
     if custom_range is not None:
         start_date, end_date = custom_range
         filtered = data[(data["date"] >= start_date) & (data["date"] <= end_date)]
-    elif range_label == "今日":
-        filtered = data[data["date"] == latest_date]
     elif range_label == "昨日":
         filtered = data[data["date"] == latest_date - pd.Timedelta(days=1)]
+    elif range_label == "周":
+        start_date = latest_date - pd.Timedelta(days=int(latest_date.weekday()))
+        filtered = data[(data["date"] >= start_date) & (data["date"] <= latest_date)]
+    elif range_label == "月":
+        start_date = pd.Timestamp(year=latest_date.year, month=latest_date.month, day=1)
+        filtered = data[(data["date"] >= start_date) & (data["date"] <= latest_date)]
     else:
         days_by_label = {
-            "3天": 3,
-            "7天": 7,
-            "15天": 15,
-            "近一个月": 30,
-            "近半年": 183,
+            "近7天": 7,
+            "近30天": 30,
         }
-        days = days_by_label[range_label]
+        days = days_by_label.get(range_label, 30)
         start_date = latest_date - pd.Timedelta(days=days - 1)
         filtered = data[data["date"] >= start_date]
     return filtered if not filtered.empty else data.tail(1)
@@ -1642,7 +1950,16 @@ def _svg_hover_points(
     return "".join(points)
 
 
-def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360) -> None:
+def _chart_fullscreen_link(key: str | None, title: str) -> str:
+    if not key:
+        return ""
+    return (
+        f'<a class="chart-icon-link" href="?fullscreen={quote(key)}" '
+        f'title="放大查看{escape(title)}">⛶</a>'
+    )
+
+
+def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360, fullscreen_key: str | None = None) -> None:
     del height
     if data.empty:
         st.markdown(
@@ -1673,6 +1990,7 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360)
     st.markdown(
         f"""
 <div class="svg-chart-card">
+  {_chart_fullscreen_link(fullscreen_key, title)}
   <div class="svg-chart-title">{escape(title)}</div>
   <div class="svg-chart-legend">
     <span><i class="legend-dot" style="background:#2563eb"></i>件数</span>
@@ -1699,7 +2017,7 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360)
     )
 
 
-def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 360) -> None:
+def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 360, fullscreen_key: str | None = None) -> None:
     del height
     if data.empty or "pay_amount" not in data.columns:
         st.markdown(
@@ -1722,6 +2040,7 @@ def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 360) -
     st.markdown(
         f"""
 <div class="svg-chart-card">
+  {_chart_fullscreen_link(fullscreen_key, title)}
   <div class="svg-chart-title">{escape(title)}</div>
   <div class="svg-chart-legend">
     <span><i class="legend-dot" style="background:#0ea5e9"></i>支付金额</span>
@@ -1745,7 +2064,7 @@ def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 360) -
     )
 
 
-def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360) -> None:
+def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360, fullscreen_key: str | None = None) -> None:
     del height
     if data.empty:
         st.markdown(
@@ -1780,6 +2099,7 @@ def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360) -> No
     st.markdown(
         f"""
 <div class="svg-chart-card">
+  {_chart_fullscreen_link(fullscreen_key, title)}
   <div class="svg-chart-title">{escape(title)}</div>
   <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="xMidYMid meet">
     <line x1="{pad}" y1="{baseline}" x2="610" y2="{baseline}" stroke="#64748b" stroke-width="1" />
@@ -1799,11 +2119,77 @@ def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360) -> No
     )
 
 
+def _render_chart_by_kind(
+    kind: str,
+    data: pd.DataFrame,
+    title: str,
+    height: int = 360,
+    fullscreen_key: str | None = None,
+) -> None:
+    if kind == "pay":
+        render_pay_amount_trend(data, title, height, fullscreen_key)
+    elif kind == "sales_orders":
+        render_sales_orders_trend(data, title, height, fullscreen_key)
+    else:
+        render_profit_trend(data, title, height, fullscreen_key)
+
+
+def render_chart_with_fullscreen(kind: str, key: str, title: str, data: pd.DataFrame, height: int = 300) -> None:
+    _render_chart_by_kind(kind, data, title, height, key)
+    if str(st.query_params.get("fullscreen", "")) != key:
+        return
+
+    if hasattr(st, "dialog"):
+        @st.dialog(title, width="large")
+        def _chart_dialog() -> None:
+            _render_chart_by_kind(kind, data, title, 560, None)
+            if st.button("关闭", key=f"close_fullscreen_{key}"):
+                if "fullscreen" in st.query_params:
+                    del st.query_params["fullscreen"]
+                st.rerun()
+
+        _chart_dialog()
+    else:
+        with st.expander(f"全屏查看：{title}", expanded=True):
+            _render_chart_by_kind(kind, data, title, 560, None)
+
+
 def _product_axis_label(product_id: object) -> str:
     text = str(product_id)
     if len(text) <= 12:
         return text
     return f"{text[:6]}...{text[-4:]}"
+
+
+def _product_select_labels(store: str, product_ids: list[object]) -> dict[str, str]:
+    product_keys = [str(product_id) for product_id in product_ids]
+    labels = {product_id: product_id for product_id in product_keys}
+    sku_cost = load_sku_cost_frame()
+    if sku_cost.empty or "商品简称" not in sku_cost.columns:
+        return labels
+
+    matched = sku_cost[
+        (sku_cost["店铺"].astype(str) == str(store))
+        & sku_cost["商品ID"].astype(str).isin(product_keys)
+    ].copy()
+    if matched.empty:
+        return labels
+
+    matched["商品简称"] = matched["商品简称"].fillna("").astype(str).str.strip()
+    matched = matched[matched["商品简称"].ne("")]
+    if matched.empty:
+        return labels
+
+    nickname_map = (
+        matched.groupby("商品ID", sort=False)["商品简称"]
+        .agg(lambda values: next((str(value).strip() for value in values if str(value).strip()), ""))
+        .to_dict()
+    )
+    for product_id in product_keys:
+        nickname = str(nickname_map.get(product_id, "")).strip()
+        if nickname:
+            labels[product_id] = f"{nickname}｜{product_id}"
+    return labels
 
 
 def _format_money(value: float) -> str:
@@ -2387,11 +2773,11 @@ def render_store_overview_section(
 
     chart_cols = st.columns(3)
     with chart_cols[0]:
-        render_pay_amount_trend(trend_store, "支付金额折线图", height=300)
+        render_chart_with_fullscreen("pay", "store_pay", "支付金额折线图", trend_store, height=300)
     with chart_cols[1]:
-        render_sales_orders_trend(trend_store, "订单数与件数折线图", height=300)
+        render_chart_with_fullscreen("sales_orders", "store_sales_orders", "订单数与件数折线图", trend_store, height=300)
     with chart_cols[2]:
-        render_profit_trend(trend_store, "盈亏柱状趋势图", height=300)
+        render_chart_with_fullscreen("profit", "store_profit", "盈亏柱状趋势图", trend_store, height=300)
 
 
 def render_product_overview_section(
@@ -2423,11 +2809,11 @@ def render_product_overview_section(
 
     chart_cols = st.columns(3)
     with chart_cols[0]:
-        render_pay_amount_trend(trend_selected, "单品支付金额折线图", height=300)
+        render_chart_with_fullscreen("pay", "product_pay", "单品支付金额折线图", trend_selected, height=300)
     with chart_cols[1]:
-        render_sales_orders_trend(trend_selected, "单品订单数与件数折线图", height=300)
+        render_chart_with_fullscreen("sales_orders", "product_sales_orders", "单品订单数与件数折线图", trend_selected, height=300)
     with chart_cols[2]:
-        render_profit_trend(trend_selected, "单品盈亏柱状趋势图", height=300)
+        render_chart_with_fullscreen("profit", "product_profit", "单品盈亏柱状趋势图", trend_selected, height=300)
 
 
 with st.sidebar:
@@ -2478,29 +2864,31 @@ except Exception as exc:
 st.title("店铺与商品")
 
 realtime_daily, realtime_generated_at = load_realtime_snapshot()
+realtime_status = read_json_file(REALTIME_STATUS_PATH)
 data_note = (
     f"实时模块更新时间：{realtime_generated_at}；趋势和明细以财务导入日报为准。"
     if realtime_generated_at and not realtime_daily.empty
     else "暂无实时抓取快照；当前以财务日报最新日期展示。"
 )
 st.caption(data_note)
+render_agent_status_light(realtime_status, realtime_generated_at)
+render_exception_alerts(realtime_daily, all_daily, realtime_status, realtime_generated_at)
 # Dashboard no longer shows local daemon status, last update, or manual trigger.
 
 rank_source = realtime_daily if not realtime_daily.empty else all_daily
 render_realtime_data_section(realtime_daily, all_daily, realtime_generated_at)
 
 st.markdown("## 店铺概览")
-store_filter_cols = st.columns([1.2, 1.2, 2.6])
+store_filter_cols = st.columns([1.1, 2.8])
 with store_filter_cols[0]:
     selected_store = st.selectbox("店铺名称", list(sources), index=0)
-with store_filter_cols[1]:
-    trend_range = st.selectbox("选择时间", TREND_RANGE_OPTIONS, index=5, key="store_trend_range")
 store_daily = all_daily[all_daily["store"] == selected_store].copy()
-with store_filter_cols[2]:
-    store_custom_range = _render_date_range_controls(store_daily, trend_range, "store_date_range")
+with store_filter_cols[1]:
+    trend_range, store_custom_range = _render_time_range_selector(store_daily, "store_date_range")
 complete = complete_daily_series(store_daily)
 summary = build_summary(store_daily, complete)
 products = summary["product_id"].tolist()
+product_select_labels = _product_select_labels(selected_store, products)
 
 store_trend = (
     store_daily.groupby(["date", "sheet"], as_index=False)
@@ -2517,11 +2905,14 @@ render_store_overview_section(selected_store, store_daily, trend_range, trend_st
 
 st.markdown("## 商品概览")
 
-product_filter_cols = st.columns([1.8, 1.2, 2])
+product_filter_cols = st.columns([1.5, 2.6])
 with product_filter_cols[0]:
-    selected_product = st.selectbox("商品 ID", products, index=0)
-with product_filter_cols[1]:
-    product_trend_range = st.selectbox("选择时间", TREND_RANGE_OPTIONS, index=5, key="product_trend_range")
+    selected_product = st.selectbox(
+        "商品",
+        products,
+        index=0,
+        format_func=lambda product_id: product_select_labels.get(str(product_id), str(product_id)),
+    )
 
 if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
     st.warning(
@@ -2531,10 +2922,9 @@ if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
 
 selected = complete[complete["product_id"] == selected_product].copy().sort_values("date")
 product_available_dates = store_daily[store_daily["product_id"].astype(str) == str(selected_product)].copy()
-with product_filter_cols[2]:
-    product_custom_range = _render_date_range_controls(
+with product_filter_cols[1]:
+    product_trend_range, product_custom_range = _render_time_range_selector(
         product_available_dates if not product_available_dates.empty else selected,
-        product_trend_range,
         "product_date_range",
     )
 trend_selected = filter_trend_range(selected, product_trend_range, product_custom_range)
