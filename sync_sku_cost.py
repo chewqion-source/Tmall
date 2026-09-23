@@ -35,6 +35,7 @@ SHOP_NAME_ALIASES = {
 SKU_COLUMNS = [
     "店铺",
     "商品ID",
+    "商品简称",
     "商家编码",
     "SKU规格",
     "单件货价",
@@ -68,6 +69,7 @@ def _read_sku_cost(path: Path) -> pd.DataFrame:
         dtype={
             "店铺": str,
             "商品ID": str,
+            "商品简称": str,
             "商家编码": str,
             "SKU规格": str,
         },
@@ -76,7 +78,7 @@ def _read_sku_cost(path: Path) -> pd.DataFrame:
         if column not in data.columns:
             data[column] = ""
     data = data[SKU_COLUMNS].copy()
-    for column in ["店铺", "商品ID", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
+    for column in ["店铺", "商品ID", "商品简称", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
         data[column] = data[column].fillna("").astype(str).str.strip()
     for column in ["单件货价", "快递费"]:
         data[column] = pd.to_numeric(data[column], errors="coerce").round(2)
