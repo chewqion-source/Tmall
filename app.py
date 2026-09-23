@@ -668,12 +668,6 @@ def _default_date_range_for_label(
     if range_label == "昨日":
         end_date = max(min_date, max_date - pd.Timedelta(days=1))
         start_date = end_date
-    elif range_label == "周":
-        end_date = max_date
-        start_date = max(min_date, max_date - pd.Timedelta(days=int(max_date.weekday())))
-    elif range_label == "月":
-        end_date = max_date
-        start_date = max(min_date, pd.Timestamp(year=max_date.year, month=max_date.month, day=1))
     else:
         days = _range_days(range_label)
         end_date = max_date
@@ -743,7 +737,7 @@ def _render_time_range_selector(
 
     selected = str(st.session_state[range_key])
     st.caption("选择时间")
-    option_columns = st.columns([0.85, 0.95, 1.05, 0.65, 0.65, 1.05])
+    option_columns = st.columns([0.85, 0.95, 1.05, 1.05])
     for index, option in enumerate(TREND_RANGE_OPTIONS):
         with option_columns[index]:
             if st.button(
@@ -778,12 +772,6 @@ def _period_window(
     if range_label == "昨日":
         end_date = latest_date - pd.Timedelta(days=1)
         start_date = end_date
-    elif range_label == "周":
-        end_date = latest_date
-        start_date = latest_date - pd.Timedelta(days=int(latest_date.weekday()))
-    elif range_label == "月":
-        end_date = latest_date
-        start_date = pd.Timestamp(year=latest_date.year, month=latest_date.month, day=1)
     else:
         end_date = latest_date
         start_date = latest_date - pd.Timedelta(days=days - 1)
@@ -1797,8 +1785,8 @@ def load_product_thumbnails(store: str) -> dict[str, str]:
     return thumbnails
 
 
-TREND_RANGE_OPTIONS = ("昨日", "近7天", "近30天", "周", "月", "自定义")
-CHART_CARD_MARGIN = dict(l=18, r=18, t=46, b=24)
+TREND_RANGE_OPTIONS = ("昨日", "近7天", "近30天", "自定义")
+CHART_CARD_MARGIN = dict(l=14, r=14, t=36, b=18)
 
 
 def style_chart_card(fig: go.Figure, title: str, height: int) -> go.Figure:
@@ -1849,12 +1837,6 @@ def filter_trend_range(
         filtered = data[(data["date"] >= start_date) & (data["date"] <= end_date)]
     elif range_label == "昨日":
         filtered = data[data["date"] == latest_date - pd.Timedelta(days=1)]
-    elif range_label == "周":
-        start_date = latest_date - pd.Timedelta(days=int(latest_date.weekday()))
-        filtered = data[(data["date"] >= start_date) & (data["date"] <= latest_date)]
-    elif range_label == "月":
-        start_date = pd.Timestamp(year=latest_date.year, month=latest_date.month, day=1)
-        filtered = data[(data["date"] >= start_date) & (data["date"] <= latest_date)]
     else:
         days_by_label = {
             "近7天": 7,
@@ -1903,10 +1885,16 @@ def _line_coords(
     step = (width - pad * 2) / max(len(values) - 1, 1)
     points: list[tuple[float, float]] = []
     for index, value in enumerate(values):
-        x = pad + index * step
+        x = width / 2 if len(values) == 1 else pad + index * step
         y = pad + (high - value) / span * (height - pad * 2)
         points.append((x, y))
     return points
+
+
+def _ensure_chart_series(values: list[float], dates: list[object]) -> tuple[list[float], list[object]]:
+    if len(values) == 1:
+        return [values[0], values[0]], [dates[0], dates[0]]
+    return values, dates
 
 
 def _compact_number(value: float) -> str:
@@ -1959,7 +1947,7 @@ def _chart_fullscreen_link(key: str | None, title: str) -> str:
     )
 
 
-def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360, fullscreen_key: str | None = None) -> None:
+def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 300, fullscreen_key: str | None = None) -> None:
     del height
     if data.empty:
         st.markdown(
@@ -1968,9 +1956,12 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360,
         )
         return
     data = data.sort_values("date")
-    width, chart_height, pad = 640, 280, 58
+    width, chart_height, pad = 640, 230, 54
     sales_values = [float(value) for value in data["sales_qty"]]
     order_values = [float(value) for value in data["order_count"]]
+    dates = data["date"].tolist()
+    sales_values, dates = _ensure_chart_series(sales_values, dates)
+    order_values, _ = _ensure_chart_series(order_values, dates)
     max_sales = max(sales_values) if sales_values else 0
     max_orders = max(order_values) if order_values else 0
     axis_high = max(max_sales, max_orders, 1.0) * 1.12
@@ -1978,11 +1969,10 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360,
     order_coords = _line_coords(order_values, width, chart_height, pad, 0.0, axis_high)
     sales_path = _smooth_path(sales_coords)
     order_path = _smooth_path(order_coords)
-    dates = data["date"].tolist()
     hover_points = _svg_hover_points(sales_coords, dates, sales_values, "件数", "#2563eb", lambda value: f"{value:,.0f}")
     hover_points += _svg_hover_points(order_coords, dates, order_values, "订单数", "#f59e0b", lambda value: f"{value:,.0f}")
     tick_html = "".join(
-        f'<text x="{x:.1f}" y="232" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
+        f'<text x="{x:.1f}" y="204" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
         for x, label in _chart_ticks(data)
     )
     sales_label_x, sales_label_y = sales_coords[-1] if sales_coords else (pad, pad)
@@ -1997,17 +1987,17 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360,
     <span><i class="legend-dot" style="background:#f59e0b"></i>订单数</span>
   </div>
   <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="xMidYMid meet">
-    <line x1="{pad}" y1="218" x2="610" y2="218" stroke="#cbd5e1" stroke-width="1" />
-    <line x1="{pad}" y1="42" x2="610" y2="42" stroke="#e2e8f0" stroke-width="1" />
-    <line x1="{pad}" y1="130" x2="610" y2="130" stroke="#e2e8f0" stroke-width="1" />
-    <line x1="{pad}" y1="42" x2="{pad}" y2="218" stroke="#cbd5e1" stroke-width="1" />
-    <text x="10" y="46" class="svg-chart-label">{_compact_number(axis_high)}</text>
-    <text x="10" y="222" class="svg-chart-label">0</text>
+    <line x1="{pad}" y1="190" x2="610" y2="190" stroke="#cbd5e1" stroke-width="1" />
+    <line x1="{pad}" y1="38" x2="610" y2="38" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="114" x2="610" y2="114" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="38" x2="{pad}" y2="190" stroke="#cbd5e1" stroke-width="1" />
+    <text x="10" y="42" class="svg-chart-label">{_compact_number(axis_high)}</text>
+    <text x="10" y="194" class="svg-chart-label">0</text>
     <path fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="{sales_path}" />
     <path fill="none" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5" d="{order_path}" />
     {hover_points}
     <text x="{min(sales_label_x + 8, 584):.1f}" y="{max(sales_label_y - 8, 18):.1f}" class="svg-chart-label">件数 {_compact_number(sales_values[-1])}</text>
-    <text x="{min(order_label_x + 8, 584):.1f}" y="{min(order_label_y + 18, 260):.1f}" class="svg-chart-label">订单 {_compact_number(order_values[-1])}</text>
+    <text x="{min(order_label_x + 8, 584):.1f}" y="{min(order_label_y + 18, 216):.1f}" class="svg-chart-label">订单 {_compact_number(order_values[-1])}</text>
     <text x="610" y="28" text-anchor="end" class="svg-chart-label">订单最高 {_compact_number(max_orders)}</text>
     {tick_html}
   </svg>
@@ -2017,7 +2007,7 @@ def render_sales_orders_trend(data: pd.DataFrame, title: str, height: int = 360,
     )
 
 
-def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 360, fullscreen_key: str | None = None) -> None:
+def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 300, fullscreen_key: str | None = None) -> None:
     del height
     if data.empty or "pay_amount" not in data.columns:
         st.markdown(
@@ -2026,14 +2016,16 @@ def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 360, f
         )
         return
     data = data.sort_values("date")
-    width, chart_height, pad = 640, 280, 58
+    width, chart_height, pad = 640, 230, 54
     values = [float(value) for value in pd.to_numeric(data["pay_amount"], errors="coerce").fillna(0)]
+    dates = data["date"].tolist()
+    values, dates = _ensure_chart_series(values, dates)
     axis_high = max(max(values) if values else 0, 1.0) * 1.12
     coords = _line_coords(values, width, chart_height, pad, 0.0, axis_high)
     line_path = _smooth_path(coords)
-    hover_points = _svg_hover_points(coords, data["date"].tolist(), values, "支付金额", "#0ea5e9", _format_money)
+    hover_points = _svg_hover_points(coords, dates, values, "支付金额", "#0ea5e9", _format_money)
     tick_html = "".join(
-        f'<text x="{x:.1f}" y="232" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
+        f'<text x="{x:.1f}" y="204" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
         for x, label in _chart_ticks(data)
     )
     label_x, label_y = coords[-1] if coords else (pad, pad)
@@ -2046,12 +2038,12 @@ def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 360, f
     <span><i class="legend-dot" style="background:#0ea5e9"></i>支付金额</span>
   </div>
   <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="xMidYMid meet">
-    <line x1="{pad}" y1="218" x2="610" y2="218" stroke="#cbd5e1" stroke-width="1" />
-    <line x1="{pad}" y1="42" x2="610" y2="42" stroke="#e2e8f0" stroke-width="1" />
-    <line x1="{pad}" y1="130" x2="610" y2="130" stroke="#e2e8f0" stroke-width="1" />
-    <line x1="{pad}" y1="42" x2="{pad}" y2="218" stroke="#cbd5e1" stroke-width="1" />
-    <text x="10" y="46" class="svg-chart-label">{_compact_number(axis_high)}</text>
-    <text x="10" y="222" class="svg-chart-label">0</text>
+    <line x1="{pad}" y1="190" x2="610" y2="190" stroke="#cbd5e1" stroke-width="1" />
+    <line x1="{pad}" y1="38" x2="610" y2="38" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="114" x2="610" y2="114" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="38" x2="{pad}" y2="190" stroke="#cbd5e1" stroke-width="1" />
+    <text x="10" y="42" class="svg-chart-label">{_compact_number(axis_high)}</text>
+    <text x="10" y="194" class="svg-chart-label">0</text>
     <path fill="none" stroke="#0ea5e9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="{line_path}" />
     {hover_points}
     <text x="{min(label_x + 8, 584):.1f}" y="{max(label_y - 8, 18):.1f}" class="svg-chart-label">支付 {_format_money(values[-1])}</text>
@@ -2064,7 +2056,7 @@ def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 360, f
     )
 
 
-def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360, fullscreen_key: str | None = None) -> None:
+def render_profit_trend(data: pd.DataFrame, title: str, height: int = 300, fullscreen_key: str | None = None) -> None:
     del height
     if data.empty:
         st.markdown(
@@ -2074,26 +2066,26 @@ def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360, fulls
         return
     data = data.sort_values("date")
     values = [float(value) for value in data["profit"]]
-    width, chart_height, pad = 640, 280, 58
+    width, chart_height, pad = 640, 230, 54
     max_abs = max(max(abs(value) for value in values), 1.0)
-    baseline = 140
+    baseline = 118
     step = (width - pad * 2) / max(len(values), 1)
     bar_width = max(min(step * 0.68, 18), 4)
     bars = []
     for index, value in enumerate(values):
         x = pad + index * step + (step - bar_width) / 2
-        bar_height = abs(value) / max_abs * 90
+        bar_height = abs(value) / max_abs * 70
         y = baseline - bar_height if value >= 0 else baseline
         color = "#16a34a" if value >= 0 else "#dc2626"
         label_y = y - 5 if value >= 0 else y + bar_height + 12
-        label_y = min(max(label_y, 18), 260)
+        label_y = min(max(label_y, 16), 214)
         value_label = _compact_number(value)
         bars.append(
             f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height:.1f}" fill="{color}" rx="2" />'
             f'<text x="{x + bar_width / 2:.1f}" y="{label_y:.1f}" text-anchor="middle" class="svg-chart-label">{escape(value_label)}</text>'
         )
     tick_html = "".join(
-        f'<text x="{x:.1f}" y="232" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
+        f'<text x="{x:.1f}" y="204" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
         for x, label in _chart_ticks(data)
     )
     st.markdown(
@@ -2103,12 +2095,12 @@ def render_profit_trend(data: pd.DataFrame, title: str, height: int = 360, fulls
   <div class="svg-chart-title">{escape(title)}</div>
   <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="xMidYMid meet">
     <line x1="{pad}" y1="{baseline}" x2="610" y2="{baseline}" stroke="#64748b" stroke-width="1" />
-    <line x1="{pad}" y1="42" x2="610" y2="42" stroke="#e2e8f0" stroke-width="1" />
-    <line x1="{pad}" y1="238" x2="610" y2="238" stroke="#e2e8f0" stroke-width="1" />
-    <line x1="{pad}" y1="42" x2="{pad}" y2="238" stroke="#cbd5e1" stroke-width="1" />
-    <text x="10" y="46" class="svg-chart-label">{_compact_number(max_abs)}</text>
+    <line x1="{pad}" y1="38" x2="610" y2="38" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="198" x2="610" y2="198" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="36" x2="{pad}" y2="198" stroke="#cbd5e1" stroke-width="1" />
+    <text x="10" y="40" class="svg-chart-label">{_compact_number(max_abs)}</text>
     <text x="10" y="{baseline + 4}" class="svg-chart-label">0</text>
-    <text x="10" y="242" class="svg-chart-label">-{_compact_number(max_abs)}</text>
+    <text x="10" y="202" class="svg-chart-label">-{_compact_number(max_abs)}</text>
     {''.join(bars)}
     <text x="610" y="28" text-anchor="end" class="svg-chart-label">最大波动 {_format_money(max_abs)}</text>
     {tick_html}
@@ -2936,4 +2928,5 @@ render_changes_table(selected)
 render_product_summary_table(summary, selected_store)
 
 render_profit_advice_floating(realtime_daily, all_daily)
+
 
