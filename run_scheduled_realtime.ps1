@@ -94,7 +94,8 @@ function Invoke-PythonStepWithRetry {
                         $combinedLog += [System.IO.File]::ReadAllText($stepLog)
                     }
                 }
-                if ($combinedLog -match "Traceback|程序异常|RuntimeError|failed|失败|错误|Error") {
+                $failurePattern = "Traceback|RuntimeError|Exception|failed|exit code:\s*[1-9]|登录异常|登录失效|需要登录|需要验证码|验证码|抓取失败|同步失败|上传失败|通知失败|程序异常|错误：|失败"
+                if ($combinedLog -match $failurePattern) {
                     $code = 1
                 }
                 else {
