@@ -28,7 +28,7 @@ from data_loader import (
     validate_known_sample,
 )
 from ui_helpers import ai_image_url, koc_url, roi_url, sidebar_link, upload_url
-from sku_cost_utils import merge_duplicate_sku_cost_rows
+from sku_cost_utils import merge_duplicate_sku_cost_rows, normalize_merchant_code
 from fee_config_utils import FEE_CONFIG_HEADERS, load_fee_config_frame, save_fee_config_frame
 
 
@@ -1020,6 +1020,7 @@ def load_sku_cost_frame(path: Path = SKU_COST_PATH) -> pd.DataFrame:
         data[column] = pd.to_numeric(data[column], errors="coerce")
     for column in ["店铺", "商品ID", "商品简称", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
         data[column] = data[column].fillna("").astype(str)
+    data["商家编码"] = data["商家编码"].map(normalize_merchant_code)
     return normalize_store_column(data)
 
 
@@ -1988,12 +1989,20 @@ def render_sku_cost_manager() -> None:
         view = view[view["店铺"] == selected_store]
     if keyword:
         query = keyword.strip()
-        view = view[
-            view["商品ID"].str.contains(query, case=False, na=False)
-            | view["商品简称"].str.contains(query, case=False, na=False)
-            | view["商家编码"].str.contains(query, case=False, na=False)
-            | view["SKU规格"].str.contains(query, case=False, na=False)
-        ]
+        merchant_model_query = query.isdigit() and len(query) == 3 and view["商家编码"].str.contains(
+            rf"KUKU[-_]?{query}", case=False, na=False, regex=True
+        ).any()
+        if merchant_model_query:
+            view = view[
+                view["商家编码"].str.contains(rf"KUKU[-_]?{query}", case=False, na=False, regex=True)
+            ]
+        else:
+            view = view[
+                view["商品ID"].str.contains(query, case=False, na=False, regex=False)
+                | view["商品简称"].str.contains(query, case=False, na=False, regex=False)
+                | view["商家编码"].str.contains(query, case=False, na=False, regex=False)
+                | view["SKU规格"].str.contains(query, case=False, na=False, regex=False)
+            ]
     if only_missing:
         view = view[view["单件货价"].isna() | view["快递费"].isna()]
     view = view.reset_index(drop=True)

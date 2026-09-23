@@ -9,6 +9,7 @@ import pandas as pd
 SKU_COST_COLUMNS = [
     "店铺",
     "商品ID",
+    "商品简称",
     "商家编码",
     "SKU规格",
     "单件货价",
@@ -41,10 +42,20 @@ def normalize_sku_spec(value: object) -> str:
     return "|".join(normalized_parts) if normalized_parts else re.sub(r"\s+", "", text)
 
 
+def normalize_merchant_code(value: object) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+
+    compact = re.sub(r"\s+", "", text)
+    compact = re.sub(r"^(?i:kuku)[-_－—]?", "KUKU-", compact)
+    return compact
+
+
 def sku_cost_merge_key(row: pd.Series | dict[str, object]) -> tuple[str, str, str, str]:
     store = clean_text(row.get("店铺", ""))
     item_id = clean_text(row.get("商品ID", ""))
-    merchant_code = clean_text(row.get("商家编码", ""))
+    merchant_code = normalize_merchant_code(row.get("商家编码", ""))
     sku_spec = normalize_sku_spec(row.get("SKU规格", ""))
     if sku_spec:
         return store, item_id, "", sku_spec
@@ -84,8 +95,9 @@ def merge_duplicate_sku_cost_rows(data: pd.DataFrame) -> pd.DataFrame:
             cleaned[column] = ""
     cleaned = cleaned[SKU_COST_COLUMNS].copy()
 
-    for column in ["店铺", "商品ID", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
+    for column in ["店铺", "商品ID", "商品简称", "商家编码", "SKU规格", "备注", "首次发现日期", "最近成交日期"]:
         cleaned[column] = cleaned[column].fillna("").astype(str).map(clean_text)
+    cleaned["商家编码"] = cleaned["商家编码"].map(normalize_merchant_code)
     for column in ["单件货价", "快递费"]:
         cleaned[column] = pd.to_numeric(cleaned[column], errors="coerce").round(2)
 
@@ -105,6 +117,7 @@ def merge_duplicate_sku_cost_rows(data: pd.DataFrame) -> pd.DataFrame:
         .agg(
             店铺=("店铺", _last_non_empty),
             商品ID=("商品ID", _last_non_empty),
+            商品简称=("商品简称", _last_non_empty),
             商家编码=("商家编码", _last_non_empty),
             SKU规格=("SKU规格", _last_non_empty),
             单件货价=("单件货价", _first_number),
