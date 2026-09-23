@@ -441,6 +441,23 @@ def inject_dashboard_styles() -> None:
     min-height: 38px;
     border-radius: 8px;
 }
+div[class*="st-key-store_date_range_range_"] button,
+div[class*="st-key-product_date_range_range_"] button {
+    width: 74px !important;
+    min-width: 74px !important;
+    height: 42px;
+    min-height: 42px;
+    padding: 0;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 760;
+    justify-content: center;
+    box-shadow: none;
+}
+div[class*="st-key-store_date_range_range_"] button[kind="primary"],
+div[class*="st-key-product_date_range_range_"] button[kind="primary"] {
+    box-shadow: 0 8px 18px rgba(255, 73, 79, .20);
+}
 .rank-panel {
     background: #f3f4f6;
     border-radius: 8px;
@@ -491,8 +508,8 @@ def inject_dashboard_styles() -> None:
     position: relative;
     background: #f3f4f6;
     border-radius: 8px;
-    padding: 18px 16px 12px;
-    height: 368px;
+    padding: 15px 14px 10px;
+    height: 318px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
@@ -500,14 +517,14 @@ def inject_dashboard_styles() -> None:
 .svg-chart-title {
     font-weight: 760;
     font-size: 16px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 .svg-chart-card svg {
     width: 100%;
     flex: 1;
     min-height: 0;
     display: block;
-    aspect-ratio: 16 / 7;
+    aspect-ratio: 1.18 / 1;
 }
 .svg-chart-label {
     fill: #64748b;
@@ -737,14 +754,14 @@ def _render_time_range_selector(
 
     selected = str(st.session_state[range_key])
     st.caption("选择时间")
-    option_columns = st.columns([0.85, 0.95, 1.05, 1.05])
+    option_columns = st.columns([0.32, 0.32, 0.34, 0.36, 2.2])
     for index, option in enumerate(TREND_RANGE_OPTIONS):
         with option_columns[index]:
             if st.button(
                 option,
                 key=f"{key_prefix}_range_{index}",
                 type="primary" if selected == option else "secondary",
-                width="stretch",
+                width=74,
             ):
                 st.session_state[range_key] = option
                 selected = option
