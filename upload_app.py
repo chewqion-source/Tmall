@@ -28,7 +28,7 @@ with st.sidebar:
 st.title("📤 财务日报上传")
 st.caption("选择对应店铺文件。系统会先校验文件名与店铺是否匹配，成功后按日期合并到服务器正式报表。")
 
-st.info("当前统计范围从 2026-07-01 开始；支持 .xls、.xlsx、.xlsm，单个文件最大 25MB。")
+st.info("支持导入报表内全部日期 Sheet；支持 .xls、.xlsx、.xlsm，单个文件最大 25MB。")
 
 try:
     current_sources = find_store_workbooks()

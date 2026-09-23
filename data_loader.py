@@ -26,8 +26,8 @@ STORE_FILE_PATTERNS = {
     "盲盒抖音": ("2026年盲盒抖音日报表*", "2026年盲盒抖店日报表*"),
 }
 LEGACY_SUMMARY_PRODUCT_ID = "全店汇总（早期格式）"
-MIN_REPORT_DATE = pd.Timestamp(2026, 7, 1)
-DISK_CACHE_SCHEMA_VERSION = "product-daily-v8"
+MIN_REPORT_DATE: pd.Timestamp | None = None
+DISK_CACHE_SCHEMA_VERSION = "product-daily-v9-all-dates"
 
 
 @dataclass(frozen=True)
@@ -285,7 +285,7 @@ def _extract_sheet(sheet: SheetData, year: int) -> list[dict[str, object]]:
     if not date_match:
         return []
     sheet_date = pd.Timestamp(year, int(date_match.group(1)), int(date_match.group(2)))
-    if sheet_date < MIN_REPORT_DATE:
+    if MIN_REPORT_DATE is not None and sheet_date < MIN_REPORT_DATE:
         return []
 
     try:
