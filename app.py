@@ -63,6 +63,7 @@ SHOP_NAME_ALIASES = {
 }
 DEFAULT_STORE_OPTIONS = ["易丽洁", "咖时光", "坐拥_宁静", "国货严选", "盲盒抖店", "盲盒千帆"]
 BLIND_BOX_CATEGORY_STORES = ["坐拥_宁静", "国货严选", "盲盒抖店", "盲盒千帆"]
+CATEGORY_SKU_KEYWORDS = ("KUKU", "KUKUNA")
 DATA_DIR = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
 SKU_COST_PATH = Path(os.environ.get("SKU_COST_FILE", DATA_DIR / "sku_cost.xlsx"))
 CATEGORY_MAPPING_PATH = Path(os.environ.get("CATEGORY_MAPPING_FILE", DATA_DIR / "category_mapping.xlsx"))
@@ -1074,6 +1075,14 @@ def _normalize_category_sku_code(value: object) -> str:
     return str(value or "").strip().upper().replace(" ", "")
 
 
+def _filter_category_sku_rows(detail: pd.DataFrame) -> pd.DataFrame:
+    if detail.empty or "sku_norm" not in detail.columns:
+        return detail
+    sku_text = detail["sku_norm"].fillna("").astype(str).str.upper()
+    mask = sku_text.apply(lambda value: any(keyword in value for keyword in CATEGORY_SKU_KEYWORDS))
+    return detail[mask].copy()
+
+
 def load_category_mapping_frame(path: Path = CATEGORY_MAPPING_PATH) -> pd.DataFrame:
     if not path.exists():
         return _empty_category_mapping_frame()
@@ -1255,6 +1264,7 @@ def load_report_sku_detail(store: str, workbook_path: Path) -> pd.DataFrame:
 
 def build_category_mapping_candidates(store: str, workbook_path: Path) -> pd.DataFrame:
     detail = load_report_sku_detail(store, workbook_path)
+    detail = _filter_category_sku_rows(detail)
     if detail.empty:
         return pd.DataFrame(columns=CATEGORY_MAPPING_HEADERS)
     candidates = (
@@ -1308,6 +1318,7 @@ def build_category_daily(
     product_daily: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     detail = load_report_sku_detail(store, workbook_path)
+    detail = _filter_category_sku_rows(detail)
     if detail.empty:
         return pd.DataFrame(), pd.DataFrame()
 
@@ -1347,7 +1358,9 @@ def build_category_daily(
             product_qty=("sales_qty", "sum"),
         )
     )
-    ad_source = product_daily[product_daily["store"] == normalize_store_name(store)].copy()
+    product_daily = product_daily.copy()
+    product_daily["_store_norm"] = product_daily["store"].map(normalize_store_name)
+    ad_source = product_daily[product_daily["_store_norm"] == normalize_store_name(store)].copy()
     if "ad_cost" in ad_source.columns:
         ad_source = (
             ad_source[["date", "product_id", "ad_cost"]]
@@ -2158,7 +2171,8 @@ def render_category_mapping_manager() -> None:
     st.info("这里使用财务日报明细，不使用实时抓取数据。可维护盲盒相关店铺的 SKU 品类映射。")
 
     try:
-        sources = find_store_workbooks()
+        raw_sources = find_store_workbooks()
+        sources = {normalize_store_name(store): path for store, path in raw_sources.items()}
     except Exception as exc:
         sources = {}
         st.warning(f"读取日报文件列表失败：{exc}")
@@ -3383,7 +3397,7 @@ def render_category_overview_section(
     if selected_store not in BLIND_BOX_CATEGORY_STORES:
         return
     st.markdown("## 品类概览")
-    st.caption("基于财务日报明细统计，不使用实时抓取数据。当前先接入坐拥_宁静。")
+    st.caption("基于财务日报明细统计，不使用实时抓取数据；仅统计商家编码包含 KUKU / KUKUNA 的 SKU。")
     if workbook_path is None:
         st.warning("没有找到该店铺日报，暂时无法统计品类。")
         return
