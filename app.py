@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 import uuid
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -218,33 +218,10 @@ def inject_dashboard_styles() -> None:
 }
 .agent-status-row {
     display: flex;
-    justify-content: flex-end;
+    justify-content: flex-start;
     align-items: center;
-    gap: 10px;
-    margin: -2px 0 24px;
-}
-.agent-refresh-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 34px;
-    height: 34px;
-    border: 1px solid #dbe3ef;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, .96);
-    color: #0f172a;
-    font-size: 17px;
-    font-weight: 800;
-    text-decoration: none;
-    line-height: 1;
-    box-shadow: 0 8px 22px rgba(15, 23, 42, .10);
-    transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
-}
-.agent-refresh-button:hover {
-    color: #ef4444;
-    border-color: #fecaca;
-    transform: translateY(-1px);
-    box-shadow: 0 10px 26px rgba(239, 68, 68, .14);
+    min-height: 38px;
+    padding-top: 6px;
 }
 .agent-status-pill {
     display: inline-flex;
@@ -1503,22 +1480,23 @@ def render_agent_status_light(status: dict[str, object], generated_at: str | Non
     detail = status.get("step") or status.get("message") or updated_at or "暂无状态"
     if isinstance(detail, str) and len(detail) > 28:
         detail = f"{detail[:28]}..."
-    refresh_params = {key: value for key, value in st.query_params.items()}
-    refresh_params["_refresh"] = uuid.uuid4().hex[:8]
-    refresh_href = f"?{urlencode(refresh_params)}"
-    st.markdown(
-        f"""
+    refresh_col, status_col = st.columns([0.14, 0.86])
+    with refresh_col:
+        if st.button("↻", key="agent_status_refresh", help="刷新当前页面数据"):
+            st.rerun()
+    with status_col:
+        st.markdown(
+            f"""
 <div class="agent-status-row">
-<a class="agent-refresh-button" href="{escape(refresh_href)}" title="刷新数据" aria-label="刷新数据">↻</a>
-<div class="agent-status-pill {tone}">
-  <span class="agent-status-dot"></span>
-  <span>抓取状态：{escape(labels.get(status_text, status_text))}</span>
-  <span>{escape(str(detail))}</span>
-</div>
+  <div class="agent-status-pill {tone}">
+    <span class="agent-status-dot"></span>
+    <span>抓取状态：{escape(labels.get(status_text, status_text))}</span>
+    <span>{escape(str(detail))}</span>
+  </div>
 </div>
 """,
-        unsafe_allow_html=True,
-    )
+            unsafe_allow_html=True,
+        )
 
 
 def render_exception_alerts(
@@ -3511,8 +3489,6 @@ except Exception as exc:
     st.error(f"读取失败：{exc}")
     st.stop()
 
-st.title("店铺与商品")
-
 realtime_daily, realtime_generated_at = load_realtime_snapshot()
 realtime_status = read_json_file(REALTIME_STATUS_PATH)
 data_note = (
@@ -3520,8 +3496,12 @@ data_note = (
     if realtime_generated_at and not realtime_daily.empty
     else "暂无实时抓取快照；当前以财务日报最新日期展示。"
 )
-st.caption(data_note)
-render_agent_status_light(realtime_status, realtime_generated_at)
+header_left, header_right = st.columns([0.68, 0.32])
+with header_left:
+    st.title("店铺与商品")
+    st.caption(data_note)
+with header_right:
+    render_agent_status_light(realtime_status, realtime_generated_at)
 render_exception_alerts(realtime_daily, all_daily, realtime_status, realtime_generated_at)
 # Dashboard no longer shows local daemon status, last update, or manual trigger.
 
