@@ -59,9 +59,10 @@ CATEGORY_MAPPING_HEADERS = [
 OLD_ZY_STORE_NAME = "坐拥" + "宁静"
 SHOP_NAME_ALIASES = {
     OLD_ZY_STORE_NAME: "坐拥_宁静",
+    "盲盒抖音": "盲盒抖店",
 }
 DEFAULT_STORE_OPTIONS = ["易丽洁", "咖时光", "坐拥_宁静", "国货严选", "盲盒抖店", "盲盒千帆"]
-BLIND_BOX_CATEGORY_STORES = ["坐拥_宁静"]
+BLIND_BOX_CATEGORY_STORES = ["坐拥_宁静", "国货严选", "盲盒抖店", "盲盒千帆"]
 DATA_DIR = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
 SKU_COST_PATH = Path(os.environ.get("SKU_COST_FILE", DATA_DIR / "sku_cost.xlsx"))
 CATEGORY_MAPPING_PATH = Path(os.environ.get("CATEGORY_MAPPING_FILE", DATA_DIR / "category_mapping.xlsx"))
@@ -2131,7 +2132,7 @@ def render_sku_cost_manager() -> None:
 def render_category_mapping_manager() -> None:
     st.title("品类映射维护")
     st.caption(f"当前文件：{CATEGORY_MAPPING_PATH}")
-    st.info("当前先接入坐拥_宁静。这里使用财务日报明细，不使用实时抓取数据。")
+    st.info("这里使用财务日报明细，不使用实时抓取数据。可维护盲盒相关店铺的 SKU 品类映射。")
 
     try:
         sources = find_store_workbooks()
@@ -2141,7 +2142,7 @@ def render_category_mapping_manager() -> None:
 
     stores = [store for store in BLIND_BOX_CATEGORY_STORES if store in sources]
     if not stores:
-        st.warning("当前没有找到坐拥_宁静日报文件，无法自动生成映射候选。")
+        st.warning("当前没有找到可用于品类映射的盲盒店铺日报，无法自动生成映射候选。")
         stores = BLIND_BOX_CATEGORY_STORES
 
     selected_store = st.selectbox("店铺", stores, index=0)
@@ -3469,6 +3470,34 @@ def render_category_overview_section(
     st.dataframe(styled, width="stretch", hide_index=True)
 
 
+def render_category_analysis_page(sources: dict[str, Path], all_daily: pd.DataFrame) -> None:
+    category_sources = {
+        normalize_store_name(store): path
+        for store, path in sources.items()
+        if normalize_store_name(store) in BLIND_BOX_CATEGORY_STORES
+    }
+    available_stores = [store for store in BLIND_BOX_CATEGORY_STORES if store in category_sources]
+    if not available_stores:
+        st.warning("当前没有找到可用于品类分析的盲盒店铺日报。")
+        return
+
+    filter_cols = st.columns([1.2, 3.0])
+    with filter_cols[0]:
+        selected_store = st.selectbox("店铺名称", available_stores, index=0, key="category_analysis_store")
+    store_daily = all_daily[all_daily["store"].map(normalize_store_name) == selected_store].copy()
+    category_base = store_daily if not store_daily.empty else all_daily
+    with filter_cols[1]:
+        trend_range, custom_range = _render_time_range_selector(category_base, "category_analysis_date_range")
+
+    render_category_overview_section(
+        selected_store,
+        category_sources.get(selected_store),
+        all_daily,
+        trend_range,
+        custom_range,
+    )
+
+
 def render_product_overview_section(
     selected: pd.DataFrame,
     selected_summary: pd.Series,
@@ -3510,6 +3539,7 @@ with st.sidebar:
     page_param = str(st.query_params.get("page", "dashboard"))
     page_mode = {
         "overall": "整体经营数据",
+        "category-analysis": "品类分析",
         "sku-cost": "SKU成本维护",
         "category-map": "品类映射",
     }.get(page_param, "日报看板")
@@ -3526,6 +3556,13 @@ with st.sidebar:
         width=168,
     ):
         st.query_params["page"] = "dashboard"
+        st.rerun()
+    if st.button(
+        "品类分析",
+        type="primary" if page_mode == "品类分析" else "secondary",
+        width=168,
+    ):
+        st.query_params["page"] = "category-analysis"
         st.rerun()
     if st.button(
         "SKU成本维护",
@@ -3578,7 +3615,10 @@ data_note = (
     if realtime_generated_at and not realtime_daily.empty
     else "暂无实时抓取快照；当前以财务日报最新日期展示。"
 )
-page_title = "整体经营数据" if page_mode == "整体经营数据" else "店铺与商品"
+page_title = {
+    "整体经营数据": "整体经营数据",
+    "品类分析": "品类分析",
+}.get(page_mode, "店铺与商品")
 header_left, header_right = st.columns([0.68, 0.32])
 with header_left:
     st.title(page_title)
@@ -3609,6 +3649,10 @@ if page_mode == "整体经营数据":
     )
     trend_all = filter_trend_range(overall_trend, overall_range, overall_custom_range)
     render_overall_business_section(all_daily, overall_range, trend_all, overall_custom_range)
+    st.stop()
+
+if page_mode == "品类分析":
+    render_category_analysis_page(sources, all_daily)
     st.stop()
 
 rank_source = realtime_daily if not realtime_daily.empty else all_daily
