@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 import uuid
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -216,11 +216,37 @@ def inject_dashboard_styles() -> None:
 .metric-chart-gap {
     height: 18px;
 }
+.agent-status-row {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    margin: -2px 0 24px;
+}
+.agent-refresh-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid #dbe3ef;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .96);
+    color: #0f172a;
+    font-size: 17px;
+    font-weight: 800;
+    text-decoration: none;
+    line-height: 1;
+    box-shadow: 0 8px 22px rgba(15, 23, 42, .10);
+    transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+.agent-refresh-button:hover {
+    color: #ef4444;
+    border-color: #fecaca;
+    transform: translateY(-1px);
+    box-shadow: 0 10px 26px rgba(239, 68, 68, .14);
+}
 .agent-status-pill {
-    position: fixed;
-    right: 64px;
-    top: 20px;
-    z-index: 2147483000;
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -1477,12 +1503,18 @@ def render_agent_status_light(status: dict[str, object], generated_at: str | Non
     detail = status.get("step") or status.get("message") or updated_at or "暂无状态"
     if isinstance(detail, str) and len(detail) > 28:
         detail = f"{detail[:28]}..."
+    refresh_params = {key: value for key, value in st.query_params.items()}
+    refresh_params["_refresh"] = uuid.uuid4().hex[:8]
+    refresh_href = f"?{urlencode(refresh_params)}"
     st.markdown(
         f"""
+<div class="agent-status-row">
+<a class="agent-refresh-button" href="{escape(refresh_href)}" title="刷新数据" aria-label="刷新数据">↻</a>
 <div class="agent-status-pill {tone}">
   <span class="agent-status-dot"></span>
   <span>抓取状态：{escape(labels.get(status_text, status_text))}</span>
   <span>{escape(str(detail))}</span>
+</div>
 </div>
 """,
         unsafe_allow_html=True,
