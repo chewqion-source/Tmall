@@ -3275,6 +3275,80 @@ def render_store_overview_section(
         render_chart_with_fullscreen("profit", "store_profit", "盈亏柱状趋势图", trend_store, height=300)
 
 
+def render_overall_business_section(
+    all_daily: pd.DataFrame,
+    trend_range: str,
+    trend_all: pd.DataFrame,
+    custom_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
+) -> None:
+    current, deltas = _period_metrics(all_daily, trend_range, custom_range)
+    metric_cols = st.columns(8)
+    cards = [
+        ("支付金额", _format_money(current["pay_amount"]), deltas["pay_amount"], "neutral"),
+        ("客单价", _format_money(current["average_order_value"]), deltas["average_order_value"], "neutral"),
+        ("订单数", f"{current['order_count']:,.0f}", deltas["order_count"], "neutral"),
+        ("件数", f"{current['sales_qty']:,.0f}", deltas["sales_qty"], "neutral"),
+        ("盈亏", _format_money(current["profit"]), deltas["profit"], profit_tone(current["profit"])),
+        ("退款金额", _format_money(current["refund_amount"]), deltas["refund_amount"], "neutral"),
+        ("退款率", f"{current['refund_rate']:.1%}", deltas["refund_rate"], "neutral"),
+        ("ROI", _format_roi(current["roi"]), deltas["roi"], profit_tone(current["roi"])),
+    ]
+    for column, (label, value, delta, tone) in zip(metric_cols, cards):
+        with column:
+            metric_card(label, value, delta, tone)
+
+    st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
+
+    chart_cols = st.columns(3)
+    with chart_cols[0]:
+        render_chart_with_fullscreen("pay", "overall_pay", "整体支付金额折线图", trend_all, height=300)
+    with chart_cols[1]:
+        render_chart_with_fullscreen("sales_orders", "overall_sales_orders", "整体订单数与件数折线图", trend_all, height=300)
+    with chart_cols[2]:
+        render_chart_with_fullscreen("profit", "overall_profit", "整体盈亏柱状趋势图", trend_all, height=300)
+
+    start_date, end_date = _period_window(all_daily, trend_range, custom_range)
+    period_rows = all_daily[(all_daily["date"] >= start_date) & (all_daily["date"] <= end_date)].copy()
+    if period_rows.empty:
+        return
+    store_summary = (
+        period_rows.groupby("store", as_index=False)
+        .agg(
+            支付金额=("pay_amount", "sum"),
+            订单数=("order_count", "sum"),
+            件数=("sales_qty", "sum"),
+            退款金额=("refund_amount", "sum"),
+            推广费=("ad_cost", "sum"),
+            盈亏=("profit", "sum"),
+        )
+        .sort_values("盈亏", ascending=False, ignore_index=True)
+    )
+    store_summary["客单价"] = store_summary.apply(
+        lambda row: row["支付金额"] / row["订单数"] if row["订单数"] else 0.0,
+        axis=1,
+    )
+    store_summary["退款率"] = store_summary.apply(
+        lambda row: row["退款金额"] / row["支付金额"] if row["支付金额"] else 0.0,
+        axis=1,
+    )
+    store_summary["ROI"] = store_summary.apply(
+        lambda row: row["盈亏"] / row["推广费"] if row["推广费"] else 0.0,
+        axis=1,
+    )
+    display = store_summary[
+        ["store", "支付金额", "客单价", "订单数", "件数", "退款金额", "退款率", "推广费", "盈亏", "ROI"]
+    ].rename(columns={"store": "店铺"})
+    for column in ["支付金额", "客单价", "退款金额", "推广费", "盈亏"]:
+        display[column] = display[column].map(lambda value: _format_money(float(value)))
+    display["退款率"] = display["退款率"].map(lambda value: f"{float(value):.1%}")
+    display["ROI"] = display["ROI"].map(lambda value: _format_roi(float(value)))
+    display["订单数"] = display["订单数"].map(lambda value: f"{float(value):,.0f}")
+    display["件数"] = display["件数"].map(lambda value: f"{float(value):,.0f}")
+
+    st.markdown("### 分店贡献")
+    st.dataframe(display, width="stretch", hide_index=True)
+
+
 def render_category_overview_section(
     selected_store: str,
     workbook_path: Path | None,
@@ -3435,9 +3509,17 @@ with st.sidebar:
     st.header("运营数据看板")
     page_param = str(st.query_params.get("page", "dashboard"))
     page_mode = {
+        "overall": "整体经营数据",
         "sku-cost": "SKU成本维护",
         "category-map": "品类映射",
     }.get(page_param, "日报看板")
+    if st.button(
+        "整体经营数据",
+        type="primary" if page_mode == "整体经营数据" else "secondary",
+        width=168,
+    ):
+        st.query_params["page"] = "overall"
+        st.rerun()
     if st.button(
         "店铺与商品",
         type="primary" if page_mode == "日报看板" else "secondary",
@@ -3496,14 +3578,38 @@ data_note = (
     if realtime_generated_at and not realtime_daily.empty
     else "暂无实时抓取快照；当前以财务日报最新日期展示。"
 )
+page_title = "整体经营数据" if page_mode == "整体经营数据" else "店铺与商品"
 header_left, header_right = st.columns([0.68, 0.32])
 with header_left:
-    st.title("店铺与商品")
+    st.title(page_title)
     st.caption(data_note)
 with header_right:
     render_agent_status_light(realtime_status, realtime_generated_at)
 render_exception_alerts(realtime_daily, all_daily, realtime_status, realtime_generated_at)
 # Dashboard no longer shows local daemon status, last update, or manual trigger.
+
+if page_mode == "整体经营数据":
+    overall_filter_cols = st.columns([1.0, 3.2])
+    with overall_filter_cols[0]:
+        st.caption("统计范围")
+        st.markdown("全部店铺")
+    with overall_filter_cols[1]:
+        overall_range, overall_custom_range = _render_time_range_selector(all_daily, "overall_date_range")
+    overall_trend = (
+        all_daily.groupby(["date", "sheet"], as_index=False)
+        .agg(
+            pay_amount=("pay_amount", "sum"),
+            sales_qty=("sales_qty", "sum"),
+            order_count=("order_count", "sum"),
+            profit=("profit", "sum"),
+            refund_amount=("refund_amount", "sum"),
+            ad_cost=("ad_cost", "sum"),
+        )
+        .sort_values("date", ignore_index=True)
+    )
+    trend_all = filter_trend_range(overall_trend, overall_range, overall_custom_range)
+    render_overall_business_section(all_daily, overall_range, trend_all, overall_custom_range)
+    st.stop()
 
 rank_source = realtime_daily if not realtime_daily.empty else all_daily
 render_realtime_data_section(realtime_daily, all_daily, realtime_generated_at)
