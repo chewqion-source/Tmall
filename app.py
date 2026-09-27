@@ -1336,29 +1336,57 @@ def build_category_daily(
     detail["二级品类"] = detail["二级品类"].fillna("")
     detail["商品简称"] = detail["商品简称"].fillna("")
 
-    category_product_pay = (
-        detail.groupby(["date", "product_id", "一级品类"], as_index=False)
-        .agg(category_product_pay=("pay_amount", "sum"))
-    )
-    product_pay = (
-        detail.groupby(["date", "product_id"], as_index=False)
-        .agg(product_pay=("pay_amount", "sum"))
+    product_totals = (
+        detail.groupby(["date", "sheet", "product_id"], as_index=False)
+        .agg(
+            product_pay=("pay_amount", "sum"),
+            product_refund=("refund_amount", "sum"),
+            product_orders=("order_count", "sum"),
+            product_goods=("goods_cost", "sum"),
+            product_profit=("profit", "sum"),
+            product_qty=("sales_qty", "sum"),
+        )
     )
     ad_source = product_daily[product_daily["store"] == normalize_store_name(store)].copy()
-    ad_source = ad_source[["date", "product_id", "ad_cost"]].copy()
-    category_product_pay = category_product_pay.merge(product_pay, on=["date", "product_id"], how="left")
-    category_product_pay = category_product_pay.merge(ad_source, on=["date", "product_id"], how="left")
-    category_product_pay["ad_cost"] = pd.to_numeric(category_product_pay["ad_cost"], errors="coerce").fillna(0)
-    category_product_pay["pay_share"] = category_product_pay.apply(
-        lambda row: float(row["category_product_pay"]) / float(row["product_pay"])
-        if float(row.get("product_pay") or 0) > 0
-        else 0.0,
-        axis=1,
+    if "ad_cost" in ad_source.columns:
+        ad_source = (
+            ad_source[["date", "product_id", "ad_cost"]]
+            .groupby(["date", "product_id"], as_index=False)
+            .agg(product_ad=("ad_cost", "sum"))
+        )
+    else:
+        ad_source = pd.DataFrame(columns=["date", "product_id", "product_ad"])
+
+    category_product = (
+        detail.groupby(["date", "sheet", "product_id", "一级品类"], as_index=False)
+        .agg(
+            goods_cost=("goods_cost", "sum"),
+            sales_qty=("sales_qty", "sum"),
+            sku_count=("sku_norm", "nunique"),
+            product_count=("product_id", "nunique"),
+        )
     )
-    category_product_pay["allocated_ad_cost"] = category_product_pay["ad_cost"] * category_product_pay["pay_share"]
+    category_product = category_product.merge(product_totals, on=["date", "sheet", "product_id"], how="left")
+    category_product = category_product.merge(ad_source, on=["date", "product_id"], how="left")
+    for column in ["product_pay", "product_refund", "product_orders", "product_goods", "product_profit", "product_qty", "product_ad"]:
+        category_product[column] = pd.to_numeric(category_product[column], errors="coerce").fillna(0)
+
+    category_product["_category_count"] = category_product.groupby(["date", "sheet", "product_id"])["一级品类"].transform("count")
+    goods_share = category_product["goods_cost"] / category_product["product_goods"].where(category_product["product_goods"] > 0)
+    qty_share = category_product["sales_qty"] / category_product["product_qty"].where(category_product["product_qty"] > 0)
+    fallback_share = 1 / category_product["_category_count"].where(category_product["_category_count"] > 0, 1)
+    category_product["alloc_share"] = goods_share.fillna(qty_share).fillna(fallback_share).fillna(0)
+    for source_col, target_col in [
+        ("product_pay", "pay_amount"),
+        ("product_refund", "refund_amount"),
+        ("product_orders", "order_count"),
+        ("product_profit", "profit"),
+        ("product_ad", "ad_cost"),
+    ]:
+        category_product[target_col] = category_product[source_col] * category_product["alloc_share"]
 
     daily = (
-        detail.groupby(["date", "sheet", "一级品类"], as_index=False)
+        category_product.groupby(["date", "sheet", "一级品类"], as_index=False)
         .agg(
             pay_amount=("pay_amount", "sum"),
             sales_qty=("sales_qty", "sum"),
@@ -1366,16 +1394,11 @@ def build_category_daily(
             refund_amount=("refund_amount", "sum"),
             goods_cost=("goods_cost", "sum"),
             profit=("profit", "sum"),
-            sku_count=("sku_norm", "nunique"),
-            product_count=("product_id", "nunique"),
+            sku_count=("sku_count", "sum"),
+            product_count=("product_count", "sum"),
+            ad_cost=("ad_cost", "sum"),
         )
     )
-    ad_by_category = (
-        category_product_pay.groupby(["date", "一级品类"], as_index=False)
-        .agg(ad_cost=("allocated_ad_cost", "sum"))
-    )
-    daily = daily.merge(ad_by_category, on=["date", "一级品类"], how="left")
-    daily["ad_cost"] = daily["ad_cost"].fillna(0)
     return daily.sort_values(["date", "一级品类"], ignore_index=True), detail
 
 
