@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import math
+import re
 import sys
 from datetime import datetime, time
 from pathlib import Path
@@ -399,6 +400,32 @@ def build_latest(products: pd.DataFrame, hosting: pd.DataFrame, ad_balance: floa
     return result
 
 
+def _extract_balance_from_text(text: str) -> float | None:
+    normalized = re.sub(r"\s+", " ", str(text or ""))
+    patterns = [
+        r"(?:可用余额|账户余额|账户总余额|推广余额)\s*(?:\(|（)?元?(?:\)|）)?\s*[¥￥]?\s*([0-9][0-9,]*(?:\.\d+)?)",
+        r"(?:可用余额|账户余额|账户总余额|推广余额).*?[¥￥]\s*([0-9][0-9,]*(?:\.\d+)?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if match:
+            try:
+                return float(match.group(1).replace(",", ""))
+            except Exception:
+                pass
+    return None
+
+
+async def fetch_account_balance(page) -> float | None:
+    try:
+        await page.goto(HOSTING_URL, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT)
+        await page.wait_for_timeout(5000)
+        visible_text = await page.locator("body").inner_text(timeout=3000)
+        return _extract_balance_from_text(visible_text)
+    except Exception:
+        return None
+
+
 def save_latest(df: pd.DataFrame) -> None:
     shop_dir = _shop_dir()
     now = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -414,6 +441,7 @@ async def async_main() -> dict:
         context = browser.contexts[0]
         page = await context.new_page()
         page.set_default_timeout(PAGE_TIMEOUT)
+        ad_balance = None
 
         try:
             products = await fetch_products(page)

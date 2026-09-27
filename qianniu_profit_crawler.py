@@ -326,6 +326,7 @@ def _capture_balance_from_page_text(page):
         balance = _parse_balance_from_text(raw_text)
         if balance is not None:
             return balance
+
     return None
 
 
@@ -369,6 +370,7 @@ def capture_account_balance(page, shop_name, urls):
                 captured["balance"] = balance
                 captured["url"] = url
                 break
+
         if captured["balance"] is not None:
             break
 
@@ -4281,6 +4283,8 @@ def run_shop(
             name,
             [
                 shop.get("balance_url", ""),
+                "https://one.alimama.com/index.html#!/account/recharge",
+
                 shop.get("site_url", ""),
                 shop.get("smart_site_url", ""),
                 shop.get("search_url", ""),

@@ -69,6 +69,7 @@ FEE_CONFIG_PATH = Path(os.environ.get("FEE_CONFIG_FILE", DATA_DIR / "fee_config.
 REALTIME_SNAPSHOT_PATH = Path(
     os.environ.get("TMALL_REALTIME_FILE", DATA_DIR / "realtime" / "latest.json")
 )
+LOCAL_REALTIME_SNAPSHOT_PATH = DATA_DIR / "realtime_snapshot" / "latest.json"
 TASK_DIR = DATA_DIR / "tasks"
 REALTIME_TASK_PATH = Path(os.environ.get("TMALL_REALTIME_TASK_FILE", TASK_DIR / "realtime_task.json"))
 REALTIME_STATUS_PATH = Path(os.environ.get("TMALL_REALTIME_STATUS_FILE", TASK_DIR / "realtime_status.json"))
@@ -1572,7 +1573,18 @@ def render_exception_alerts(
     st.markdown(f'<div class="alert-grid">{cards}</div>', unsafe_allow_html=True)
 
 
-def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.DataFrame, str | None]:
+def resolve_realtime_snapshot_path(path: Path | None = None) -> Path | None:
+    if path is not None:
+        return path if path.exists() else None
+
+    candidates = [REALTIME_SNAPSHOT_PATH, LOCAL_REALTIME_SNAPSHOT_PATH]
+    existing = [candidate for candidate in candidates if candidate.exists()]
+    if not existing:
+        return None
+    return max(existing, key=lambda candidate: candidate.stat().st_mtime_ns)
+
+
+def load_realtime_snapshot(path: Path | None = None) -> tuple[pd.DataFrame, str | None]:
     def apply_store_adjustments(data: pd.DataFrame, adjustments: list[dict[str, object]]) -> pd.DataFrame:
         if data.empty or not adjustments:
             return data
@@ -1617,9 +1629,10 @@ def load_realtime_snapshot(path: Path = REALTIME_SNAPSHOT_PATH) -> tuple[pd.Data
             return data
         return pd.concat([data, pd.DataFrame(rows)], ignore_index=True)
 
-    if not path.exists():
+    snapshot_path = resolve_realtime_snapshot_path(path)
+    if snapshot_path is None:
         return pd.DataFrame(), None
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
     records = payload.get("records", [])
     if not records:
         return pd.DataFrame(), payload.get("generated_at")
@@ -3102,7 +3115,11 @@ def render_latest_product_extremes(all_daily: pd.DataFrame) -> None:
 def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.DataFrame, generated_at: str | None) -> None:
     st.markdown("## 实时数据")
     st.caption(f"更新时间 {generated_at}" if generated_at else "暂无实时快照")
-    source = realtime_daily if not realtime_daily.empty else all_daily
+    if realtime_daily.empty:
+        st.warning("暂无实时抓取快照。实时盈亏和亏损产品 TOP10 不再使用历史日报兜底，请先跑一轮实时抓取。")
+        return
+
+    source = realtime_daily
     latest_date = source["date"].max()
     latest_rows = source[source["date"] == latest_date].copy()
 

@@ -23,7 +23,8 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent
 SNAPSHOT_FILE = BASE_DIR / "data" / "realtime_snapshot" / "latest.json"
 SKU_COST_FILE = BASE_DIR / "config" / "sku_cost.xlsx"
-CONFIG_FILE = BASE_DIR / "config" / "feishu_webhook.json"
+CONFIG_FILE = BASE_DIR / "config" / "realtime_feishu_webhook.json"
+LEGACY_CONFIG_FILE = BASE_DIR / "config" / "feishu_webhook.json"
 DASHBOARD_URL = "http://150.158.133.102:8080/"
 
 
@@ -31,8 +32,9 @@ def _load_config() -> tuple[str, str]:
     webhook = os.environ.get("FEISHU_WEBHOOK", "").strip()
     secret = os.environ.get("FEISHU_SECRET", "").strip()
 
-    if CONFIG_FILE.exists():
-        payload = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    config_file = CONFIG_FILE if CONFIG_FILE.exists() else LEGACY_CONFIG_FILE
+    if config_file.exists():
+        payload = json.loads(config_file.read_text(encoding="utf-8"))
         webhook = webhook or str(payload.get("webhook", "")).strip()
         secret = secret or str(payload.get("secret", "")).strip()
 

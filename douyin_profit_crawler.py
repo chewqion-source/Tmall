@@ -767,6 +767,34 @@ def fetch_realtime_qianchuan_summary(page: CdpPage, day: str) -> pd.DataFrame:
     return df
 
 
+def extract_qianchuan_balance(page: CdpPage) -> float | None:
+    payload = page.eval_json(
+        r"""
+        JSON.stringify((() => {
+          const text = document.body ? document.body.innerText : '';
+          const compact = text.replace(/\s+/g, ' ');
+          const patterns = [
+            /账户余额\s*[¥￥]?\s*([0-9][0-9,]*(?:\.\d+)?)/,
+            /我的资金.*?账户余额\s*[¥￥]?\s*([0-9][0-9,]*(?:\.\d+)?)/,
+            /账户余额.*?[¥￥]\s*([0-9][0-9,]*(?:\.\d+)?)/
+          ];
+          for (const pattern of patterns) {
+            const match = compact.match(pattern);
+            if (match) return { balance: match[1] };
+          }
+          return { balance: null };
+        })())
+        """
+    )
+    raw = (payload or {}).get("balance")
+    if raw in (None, ""):
+        return None
+    try:
+        return float(str(raw).replace(",", ""))
+    except Exception:
+        return None
+
+
 def settlement_metric_cents(data: dict[str, Any], metric: str) -> float:
     try:
         card = (
@@ -1407,7 +1435,13 @@ def build_profit(
     return grouped.sort_values("实时盈亏", ascending=False)
 
 
-def save_outputs(df: pd.DataFrame, refunds_df: pd.DataFrame, promotions_df: pd.DataFrame, day: str) -> None:
+def save_outputs(
+    df: pd.DataFrame,
+    refunds_df: pd.DataFrame,
+    promotions_df: pd.DataFrame,
+    day: str,
+    ad_balance: float | None = None,
+) -> None:
     SHOP_DIR.mkdir(parents=True, exist_ok=True)
     money_cols = [
         "支付金额",
@@ -1431,6 +1465,7 @@ def save_outputs(df: pd.DataFrame, refunds_df: pd.DataFrame, promotions_df: pd.D
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0).round(2)
     if "利润率" in df.columns:
         df["利润率"] = pd.to_numeric(df["利润率"], errors="coerce").fillna(0.0).round(4)
+    df["账户推广余额"] = ad_balance
     refunds_df = refunds_df.copy()
     for col in ["退款金额", "退运费"]:
         if col in refunds_df.columns:
@@ -1463,6 +1498,7 @@ def save_outputs(df: pd.DataFrame, refunds_df: pd.DataFrame, promotions_df: pd.D
         ),
         "row_profit": round(float(df["实时盈亏"].sum()) if not df.empty else 0.0, 2),
         "overall_profit": round(float(df.attrs.get("overall_profit", 0.0)), 2),
+        "ad_balance": round(float(ad_balance), 2) if ad_balance is not None else None,
         "promotion_rows": int(len(promotions_df)),
         "promotion_day": text(promotions_df["推广数据日期"].iloc[0]) if not promotions_df.empty else "",
     }
@@ -1497,12 +1533,14 @@ def run(port: int = DEFAULT_PORT, day: str | None = None, promotion_day: str | N
             "compass.jinritemai.com/shop/commodity/product-list",
             "https://compass.jinritemai.com/shop/commodity/product-list",
         )
+    ad_balance = None
     try:
         if promotion_day == day:
             promotions_df = fetch_realtime_qianchuan_summary(
                 promo_page,
                 promotion_day,
             )
+            ad_balance = extract_qianchuan_balance(promo_page)
         else:
             promotions_df = fetch_product_promotions(promo_page, promotion_day)
         try:
@@ -1525,7 +1563,7 @@ def run(port: int = DEFAULT_PORT, day: str | None = None, promotion_day: str | N
     result.attrs["sku_cost_added"] = added
     result.attrs["sku_cost_updated"] = updated
     result.attrs["sku_cost_unique"] = unique_count
-    save_outputs(result, refunds_df, promotions_df, day)
+    save_outputs(result, refunds_df, promotions_df, day, ad_balance)
     return result
 
 

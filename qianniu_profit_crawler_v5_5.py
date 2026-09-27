@@ -785,6 +785,12 @@ def integrate_external_platform_shop(shop, default_shop_name, platform_label):
         print(f"⚠ [{shop_display_name}] latest.csv 不是今天数据（{capture_day}），跳过本轮整合")
         return None
 
+    if ad_balance is None and "账户推广余额" in df.columns:
+        existing_balance = clean_numeric(df["账户推广余额"]).dropna()
+        existing_balance = existing_balance[existing_balance > 0]
+        if not existing_balance.empty:
+            ad_balance = float(existing_balance.iloc[0])
+
     df["店铺"] = shop_display_name
     df["抓取时间"] = generated_at
     df["商品货号"] = df.get("商家编码", "")
@@ -2796,6 +2802,7 @@ if __name__ == "__main__":
         and
         not os.environ.get("TMALL_NO_PAUSE")
     ):
-        input(
-            "\n按 Enter 退出..."
-        )
+        if sys.stdin.isatty():
+            input(
+                "\n按 Enter 退出..."
+            )
