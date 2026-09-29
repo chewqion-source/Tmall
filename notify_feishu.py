@@ -28,6 +28,70 @@ LEGACY_CONFIG_FILE = BASE_DIR / "config" / "feishu_webhook.json"
 DASHBOARD_URL = "http://150.158.133.102:8080/"
 
 
+def _first_existing(paths: list[Path]) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
+def _snapshot_file() -> Path:
+    return _first_existing(
+        [
+            SNAPSHOT_FILE,
+            BASE_DIR / "data" / "realtime" / "latest.json",
+            BASE_DIR.parent / "data" / "realtime_snapshot" / "latest.json",
+            BASE_DIR.parent / "data" / "realtime" / "latest.json",
+            Path("/opt/tmall-dashboard/data/realtime_snapshot/latest.json"),
+            Path("/opt/tmall-dashboard/data/realtime/latest.json"),
+        ]
+    )
+
+
+def _sku_cost_file() -> Path:
+    return _first_existing(
+        [
+            SKU_COST_FILE,
+            BASE_DIR / "data" / "sku_cost.xlsx",
+            BASE_DIR.parent / "data" / "sku_cost.xlsx",
+            Path("/opt/tmall-dashboard/data/sku_cost.xlsx"),
+        ]
+    )
+
+
+def _data_roots() -> list[Path]:
+    roots = [
+        BASE_DIR / "data",
+        BASE_DIR.parent / "data",
+        Path("/opt/tmall-dashboard/data"),
+    ]
+    unique = []
+    seen = set()
+    for root in roots:
+        key = str(root)
+        if key not in seen:
+            seen.add(key)
+            unique.append(root)
+    return unique
+
+
+def _summary_ad_balances() -> dict[str, float]:
+    balances: dict[str, float] = {}
+    for root in _data_roots():
+        if not root.exists():
+            continue
+        for summary_file in root.glob("*/latest_summary.json"):
+            try:
+                summary = json.loads(summary_file.read_text(encoding="utf-8"))
+                store = str(summary.get("store") or summary_file.parent.name).strip()
+                balance = summary.get("ad_balance")
+                if store and balance is not None:
+                    balances[store] = float(balance)
+            except Exception:
+                continue
+    return balances
+
+
 def _load_config() -> tuple[str, str]:
     webhook = os.environ.get("FEISHU_WEBHOOK", "").strip()
     secret = os.environ.get("FEISHU_SECRET", "").strip()
@@ -62,10 +126,11 @@ def _money_optional(value: object) -> str:
 
 
 def _snapshot_summary() -> dict[str, object]:
-    if not SNAPSHOT_FILE.exists():
-        raise FileNotFoundError(f"实时快照不存在：{SNAPSHOT_FILE}")
+    snapshot_file = _snapshot_file()
+    if not snapshot_file.exists():
+        raise FileNotFoundError(f"实时快照不存在：{snapshot_file}")
 
-    payload = json.loads(SNAPSHOT_FILE.read_text(encoding="utf-8"))
+    payload = json.loads(snapshot_file.read_text(encoding="utf-8"))
     generated_at = str(payload.get("generated_at", "")).strip()
     today = datetime.now().strftime("%Y-%m-%d")
     if not generated_at:
@@ -191,6 +256,13 @@ def _snapshot_summary() -> dict[str, object]:
                 store_summary["store_level_ad_cost"]
             )
 
+    summary_balances = _summary_ad_balances()
+    if summary_balances:
+        for store, balance in summary_balances.items():
+            mask = store_summary["store"].astype(str).eq(store) & store_summary["ad_balance"].isna()
+            if mask.any():
+                store_summary.loc[mask, "ad_balance"] = balance
+
     return {
         "generated_at": payload.get("generated_at", ""),
         "record_count": len(data),
@@ -205,13 +277,64 @@ def _snapshot_summary() -> dict[str, object]:
     }
 
 
+def _current_snapshot_missing_cost_summary() -> dict[str, int] | None:
+    snapshot_file = _snapshot_file()
+    if not snapshot_file.exists():
+        return None
+
+    try:
+        payload = json.loads(snapshot_file.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    records = payload.get("records", [])
+    if not records:
+        return None
+
+    data = pd.DataFrame(records)
+    if "unmatched_sku_rows" not in data.columns:
+        return None
+
+    data["unmatched_sku_rows"] = (
+        pd.to_numeric(data["unmatched_sku_rows"], errors="coerce")
+        .fillna(0)
+    )
+    missing = data[data["unmatched_sku_rows"] > 0].copy()
+    if missing.empty:
+        return {"missing_rows": 0, "missing_products": 0}
+
+    product_cols = [
+        col
+        for col in ["store", "product_id", "product_name"]
+        if col in missing.columns
+    ]
+    if product_cols:
+        missing_products = missing[product_cols].drop_duplicates().shape[0]
+    else:
+        missing_products = len(missing)
+
+    return {
+        "missing_rows": int(round(float(missing["unmatched_sku_rows"].sum()))),
+        "missing_products": int(missing_products),
+    }
+
+
 def _sku_cost_summary() -> dict[str, int]:
-    if not SKU_COST_FILE.exists():
+    sku_cost_file = _sku_cost_file()
+    if not sku_cost_file.exists():
         return {"rows": 0, "missing_rows": 0, "missing_products": 0}
 
-    data = pd.read_excel(SKU_COST_FILE, dtype=str)
+    data = pd.read_excel(sku_cost_file, dtype=str)
     if data.empty or len(data.columns) < 5:
         return {"rows": len(data), "missing_rows": 0, "missing_products": 0}
+
+    snapshot_missing = _current_snapshot_missing_cost_summary()
+    if snapshot_missing is not None:
+        return {
+            "rows": len(data),
+            "missing_rows": snapshot_missing["missing_rows"],
+            "missing_products": snapshot_missing["missing_products"],
+        }
 
     store_col = data.columns[0]
     product_col = data.columns[1]

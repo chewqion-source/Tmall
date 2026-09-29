@@ -403,7 +403,32 @@ def fetch_promotions(page: CdpPage, day: str, page_size: int = 50, max_pages: in
     if report_rows:
         df = pd.DataFrame(report_rows)
         product_spend = float(df["推商品推广消耗"].sum())
-        return df, max(account_spend, product_spend), account_balance
+        account_total = max(account_spend, product_spend)
+        remainder = max(account_total - product_spend, 0.0)
+        if remainder > 0.01:
+            df = pd.concat(
+                [
+                    df,
+                    pd.DataFrame(
+                        [
+                            {
+                                "推广数据日期": day,
+                                "商品ID": "",
+                                "商品名称": "小红书千帆未归属推广消耗",
+                                "罗盘支付金额": 0.0,
+                                "店铺被投推广消耗": remainder,
+                                "推商品推广消耗": 0.0,
+                                "推广消耗合计": remainder,
+                                "推广数据口径": "小红书千帆账户消耗差额",
+                                "推广更新时间": datetime.now().strftime("%m-%d %H:%M"),
+                                "推广后台ROI": 0.0,
+                            }
+                        ]
+                    ),
+                ],
+                ignore_index=True,
+            )
+        return df, account_total, account_balance
 
     columns = [
         "campaignFilterState",

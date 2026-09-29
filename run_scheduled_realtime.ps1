@@ -188,7 +188,10 @@ try {
         exit $syncPullCode
     }
 
-    $runCode = Invoke-PythonStepWithRetry -Label "crawler" -Arguments @($RunScript) -MaxAttempts 2 -TimeoutSeconds 1800
+    # The main crawler already contains per-store fault tolerance. Retrying the
+    # whole script here makes the Qianniu stores run twice when a later platform
+    # fails, which slows down the scheduled task and may disturb logged-in pages.
+    $runCode = Invoke-PythonStepWithRetry -Label "crawler" -Arguments @($RunScript) -MaxAttempts 1 -TimeoutSeconds 1800
     if ($runCode -ne 0) {
         if (Test-FreshTodaySnapshot -RunStartedAt $runStartedAt) {
             Write-RunLog "crawler returned exit code $runCode, but a fresh today snapshot exists; continuing upload and Feishu notification"

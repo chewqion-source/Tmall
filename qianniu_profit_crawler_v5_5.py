@@ -2239,6 +2239,18 @@ def write_realtime_snapshot(df):
             )
             store_adjustments[name] = current
 
+        summary_balance = summary.get("ad_balance")
+        if name and name in seen_stores and summary_balance is not None:
+            try:
+                summary_balance = float(summary_balance)
+            except (TypeError, ValueError):
+                summary_balance = None
+            if summary_balance is not None:
+                for record in records:
+                    if str(record.get("store", "")).strip() == name:
+                        record["ad_balance"] = summary_balance
+                        record["ad_balance_source"] = "promotion_balance_api"
+
         if not name or name in seen_stores:
             continue
         captured_at = str(summary.get("generated_at") or generated_at)
@@ -2262,8 +2274,8 @@ def write_realtime_snapshot(df):
                 "keyword_promotion_roi": None,
                 "current_roi": None,
                 "break_even_roi": None,
-                "ad_balance": None,
-                "ad_balance_source": "",
+                "ad_balance": float(summary.get("ad_balance", 0) or 0) if summary.get("ad_balance") is not None else None,
+                "ad_balance_source": "promotion_balance_api" if summary.get("ad_balance") is not None else "",
                 "order_count": 0.0,
                 "sku_count": 0.0,
                 "merch_cost": 0.0,
