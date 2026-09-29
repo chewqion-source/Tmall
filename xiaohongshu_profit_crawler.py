@@ -869,6 +869,9 @@ def build_profit(
     ad_balance: float,
 ) -> pd.DataFrame:
     keys = ["商品ID", "商家编码", "SKU规格"]
+    realtime_refund_total = 0.0
+    if not realtime_items_df.empty and "退款金额" in realtime_items_df.columns:
+        realtime_refund_total = float(pd.to_numeric(realtime_items_df["退款金额"], errors="coerce").fillna(0.0).sum())
     if orders_df.empty:
         grouped = pd.DataFrame(
             columns=["店铺", *keys, "商品名称", "支付金额", "SKU订单数", "SKU成交件数"]
@@ -893,6 +896,40 @@ def build_profit(
     if not refunds_df.empty and not grouped.empty:
         refund_grouped = refunds_df.groupby(keys, as_index=False).agg({"退款金额": "sum"})
         grouped = grouped.merge(refund_grouped, on=keys, how="left")
+        grouped["退款金额"] = pd.to_numeric(grouped["退款金额"], errors="coerce").fillna(0.0)
+        unmatched_refunds = refunds_df.copy()
+        unmatched_refunds["退款金额"] = pd.to_numeric(unmatched_refunds.get("退款金额", 0), errors="coerce").fillna(0.0)
+        matched_refund_total = float(grouped["退款金额"].sum())
+        refund_total = float(unmatched_refunds["退款金额"].sum())
+        remainder_refund = max(refund_total - matched_refund_total, 0.0)
+        if realtime_refund_total <= 0.01 and remainder_refund > 0.01:
+            grouped = pd.concat(
+                [
+                    grouped,
+                    pd.DataFrame(
+                        [
+                            {
+                                "店铺": SHOP_NAME,
+                                "商品ID": "",
+                                "商家编码": "",
+                                "SKU规格": "",
+                                "商品名称": "成功退款未匹配到商品",
+                                "支付金额": 0.0,
+                                "SKU订单数": 0.0,
+                                "SKU成交件数": 0.0,
+                                "单件货价": 0.0,
+                                "快递费": 0.0,
+                                "货品成本": 0.0,
+                                "快递成本": 0.0,
+                                "成本匹配状态": "成功退款未匹配到商品",
+                                "退款金额": remainder_refund,
+                            }
+                        ]
+                    ),
+                ],
+                ignore_index=True,
+                sort=False,
+            )
     elif "退款金额" not in grouped.columns:
         grouped["退款金额"] = 0.0
 
@@ -916,6 +953,94 @@ def build_profit(
         grouped["商品主图"] = grouped["商品ID"].map(image_map).fillna(grouped.get("商品主图", ""))
 
     grouped["退款金额"] = pd.to_numeric(grouped.get("退款金额", 0), errors="coerce").fillna(0.0)
+    if not realtime_items_df.empty and not grouped.empty:
+        realtime = realtime_items_df.copy()
+        realtime["商品ID"] = realtime["商品ID"].map(text)
+        realtime["支付金额"] = pd.to_numeric(realtime.get("支付金额", 0), errors="coerce").fillna(0.0)
+        realtime["退款金额"] = pd.to_numeric(realtime.get("退款金额", 0), errors="coerce").fillna(0.0)
+        realtime["SKU订单数"] = pd.to_numeric(realtime.get("SKU订单数", 0), errors="coerce").fillna(0.0)
+        realtime["SKU成交件数"] = pd.to_numeric(realtime.get("SKU成交件数", 0), errors="coerce").fillna(0.0)
+        realtime_totals = (
+            realtime.groupby("商品ID", as_index=False)
+            .agg(
+                {
+                    "商品名称": "first",
+                    "支付金额": "sum",
+                    "退款金额": "sum",
+                    "SKU订单数": "sum",
+                    "SKU成交件数": "sum",
+                    "商品主图": "first",
+                }
+            )
+        )
+        grouped["订单接口支付金额"] = pd.to_numeric(grouped.get("支付金额", 0), errors="coerce").fillna(0.0)
+        grouped["售后接口退款金额"] = pd.to_numeric(grouped.get("退款金额", 0), errors="coerce").fillna(0.0)
+        grouped["实时概览支付金额"] = 0.0
+        grouped["实时概览退款金额"] = 0.0
+        grouped["支付金额"] = 0.0
+        if realtime_refund_total > 0.01:
+            grouped["退款金额"] = 0.0
+
+        for _, item in realtime_totals.iterrows():
+            product_id = text(item.get("商品ID"))
+            if not product_id:
+                continue
+            pay_total = num(item.get("支付金额"))
+            refund_total = num(item.get("退款金额"))
+            mask = grouped["商品ID"].astype(str).map(text).eq(product_id)
+            if mask.any():
+                base_pay = grouped.loc[mask, "订单接口支付金额"]
+                if float(base_pay.sum()) > 0:
+                    weights = base_pay / float(base_pay.sum())
+                elif float(grouped.loc[mask, "SKU成交件数"].sum()) > 0:
+                    weights = grouped.loc[mask, "SKU成交件数"] / float(grouped.loc[mask, "SKU成交件数"].sum())
+                else:
+                    weights = pd.Series(1 / int(mask.sum()), index=grouped.index[mask])
+                grouped.loc[mask, "支付金额"] = (weights * pay_total).round(6)
+                if realtime_refund_total > 0.01:
+                    grouped.loc[mask, "退款金额"] = (weights * refund_total).round(6)
+                grouped.loc[mask, "实时概览支付金额"] = pay_total
+                grouped.loc[mask, "实时概览退款金额"] = refund_total
+                if "商品主图" in grouped.columns and text(item.get("商品主图")):
+                    grouped.loc[mask, "商品主图"] = grouped.loc[mask, "商品主图"].fillna(text(item.get("商品主图")))
+                continue
+
+            if pay_total <= 0 and refund_total <= 0:
+                continue
+            grouped = pd.concat(
+                [
+                    grouped,
+                    pd.DataFrame(
+                        [
+                            {
+                                "店铺": SHOP_NAME,
+                                "商品ID": product_id,
+                                "商家编码": "",
+                                "SKU规格": "",
+                                "商品名称": text(item.get("商品名称")) or "实时概览未匹配订单商品",
+                                "支付金额": pay_total,
+                                "SKU订单数": num(item.get("SKU订单数")),
+                                "SKU成交件数": num(item.get("SKU成交件数")),
+                                "单件货价": 0.0,
+                                "快递费": 0.0,
+                                "货品成本": 0.0,
+                                "快递成本": 0.0,
+                                "成本匹配状态": "实时概览未匹配订单成本",
+                                "退款金额": refund_total if realtime_refund_total > 0.01 else 0.0,
+                                "订单接口支付金额": 0.0,
+                                "售后接口退款金额": 0.0,
+                                "实时概览支付金额": pay_total,
+                                "实时概览退款金额": refund_total,
+                                "商品主图": text(item.get("商品主图")),
+                            }
+                        ]
+                    ),
+                ],
+                ignore_index=True,
+                sort=False,
+            )
+
+        grouped["支付金额校准差额"] = grouped["实时概览支付金额"] - grouped.groupby("商品ID")["订单接口支付金额"].transform("sum").fillna(0.0)
     for col in ["店铺被投推广消耗", "推商品推广消耗", "推广后台ROI"]:
         grouped[col] = 0.0
     grouped["推广数据日期"] = ""
@@ -928,10 +1053,46 @@ def build_profit(
         product_ad_map = promotions.groupby("商品ID")["推商品推广消耗"].sum().to_dict()
         product_roi_map = promotions.drop_duplicates("商品ID").set_index("商品ID")["推广后台ROI"].to_dict()
         promo_day_map = promotions.drop_duplicates("商品ID").set_index("商品ID")["推广数据日期"].to_dict()
+
+        if not grouped.empty:
+            grouped_product_ids = set(grouped["商品ID"].astype(str).map(text))
+        else:
+            grouped_product_ids = set()
+        missing_promo_rows = []
+        for _, promo in promotions.iterrows():
+            product_id = text(promo.get("商品ID"))
+            promo_cost = num(promo.get("推商品推广消耗"))
+            if not product_id or promo_cost <= 0 or product_id in grouped_product_ids:
+                continue
+            missing_promo_rows.append(
+                {
+                    "店铺": SHOP_NAME,
+                    "商品ID": product_id,
+                    "商家编码": "",
+                    "SKU规格": "",
+                    "商品名称": text(promo.get("商品名称")) or "有推广消耗但无成交商品",
+                    "支付金额": 0.0,
+                    "SKU订单数": 0.0,
+                    "SKU成交件数": 0.0,
+                    "单件货价": 0.0,
+                    "快递费": 0.0,
+                    "货品成本": 0.0,
+                    "快递成本": 0.0,
+                    "成本匹配状态": "有推广消耗但无成交",
+                    "退款金额": 0.0,
+                }
+            )
+        if missing_promo_rows:
+            grouped = pd.concat([grouped, pd.DataFrame(missing_promo_rows)], ignore_index=True, sort=False)
+
         product_pay_sum = grouped.groupby("商品ID")["支付金额"].transform("sum").replace(0, pd.NA)
         grouped["推商品推广消耗"] = (
             grouped["商品ID"].map(product_ad_map).fillna(0.0) * grouped["支付金额"] / product_pay_sum
         ).fillna(0.0)
+        zero_pay_promo = grouped["支付金额"].fillna(0).eq(0)
+        grouped.loc[zero_pay_promo, "推商品推广消耗"] = (
+            grouped.loc[zero_pay_promo, "商品ID"].map(product_ad_map).fillna(0.0)
+        )
         grouped["推广后台ROI"] = grouped["商品ID"].map(product_roi_map).fillna(0.0)
         grouped["推广数据日期"] = grouped["商品ID"].map(promo_day_map).fillna("")
     else:
