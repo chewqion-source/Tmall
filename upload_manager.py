@@ -62,6 +62,7 @@ class UploadResult:
     added_dates: int = 0
     updated_dates: int = 0
     skipped_dates: int = 0
+    changed_dates: tuple[str, ...] = ()
 
 
 def _validate_upload(store: str, original_name: str, content: bytes) -> str:
@@ -187,7 +188,7 @@ def _write_merged_workbook(sheets_by_date: Mapping[pd.Timestamp, SheetData], tar
         temporary_path.unlink(missing_ok=True)
 
 
-def _merge_uploaded_workbook(staged_path: Path, target_path: Path) -> tuple[int, int, int]:
+def _merge_uploaded_workbook(staged_path: Path, target_path: Path) -> tuple[int, int, int, list[pd.Timestamp]]:
     incoming_sheets = _date_sheets(staged_path)
     incoming_fingerprints = _daily_fingerprints(staged_path)
     if not incoming_sheets:
@@ -214,18 +215,21 @@ def _merge_uploaded_workbook(staged_path: Path, target_path: Path) -> tuple[int,
 
     merged_sheets = dict(existing_sheets)
     added = updated = skipped = 0
+    changed_dates: list[pd.Timestamp] = []
     for sheet_date, sheet in incoming_sheets.items():
         if sheet_date not in existing_sheets:
             added += 1
+            changed_dates.append(sheet_date)
             merged_sheets[sheet_date] = sheet
         elif existing_fingerprints.get(sheet_date) != incoming_fingerprints.get(sheet_date):
             updated += 1
+            changed_dates.append(sheet_date)
             merged_sheets[sheet_date] = sheet
         else:
             skipped += 1
 
     _write_merged_workbook(merged_sheets, target_path)
-    return added, updated, skipped
+    return added, updated, skipped, sorted(changed_dates)
 
 
 def _store_from_target(target_path: Path) -> str:
@@ -300,7 +304,7 @@ def install_uploaded_workbooks(
                 archive_name = f"{timestamp}-{uuid.uuid4().hex[:8]}-{existing.name}"
                 archive_copy = archive_dir / archive_name
                 archive_copy.write_bytes(existing.read_bytes())
-            added, updated, skipped = _merge_uploaded_workbook(staged_path, target_path)
+            added, updated, skipped, changed_dates = _merge_uploaded_workbook(staged_path, target_path)
             if os.name != "nt":
                 target_path.chmod(0o640)
             result = UploadResult(
@@ -310,6 +314,7 @@ def install_uploaded_workbooks(
                     "added_dates": added,
                     "updated_dates": updated,
                     "skipped_dates": skipped,
+                    "changed_dates": tuple(day.strftime("%Y-%m-%d") for day in changed_dates),
                 }
             )
             results.append(result)

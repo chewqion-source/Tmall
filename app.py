@@ -64,6 +64,9 @@ SHOP_NAME_ALIASES = {
 DEFAULT_STORE_OPTIONS = ["易丽洁", "咖时光", "坐拥_宁静", "国货严选", "盲盒抖店", "盲盒千帆"]
 BLIND_BOX_CATEGORY_STORES = ["坐拥_宁静", "国货严选", "盲盒抖店", "盲盒千帆"]
 CATEGORY_SKU_KEYWORDS = ("KUKU", "KUKUNA")
+CATEGORY_STORE_NAME_KEYWORDS = {
+    "盲盒千帆": ("盲盒",),
+}
 DATA_DIR = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
 SKU_COST_PATH = Path(os.environ.get("SKU_COST_FILE", DATA_DIR / "sku_cost.xlsx"))
 CATEGORY_MAPPING_PATH = Path(os.environ.get("CATEGORY_MAPPING_FILE", DATA_DIR / "category_mapping.xlsx"))
@@ -574,6 +577,10 @@ div[class*="st-key-product_date_range_range_"] button[kind="primary"] {
     font-size: 12px;
     margin-bottom: 4px;
 }
+.svg-chart-legend-wrap {
+    flex-wrap: wrap;
+    row-gap: 4px;
+}
 .legend-dot {
     display: inline-block;
     width: 9px;
@@ -1075,11 +1082,78 @@ def _normalize_category_sku_code(value: object) -> str:
     return str(value or "").strip().upper().replace(" ", "")
 
 
+def _normalize_report_header(value: object) -> str:
+    text = re.sub(r"\s+", "", str(value or "").strip())
+    aliases = {
+        "商品id": "商品ID",
+        "商品Id": "商品ID",
+        "商品ID": "商品ID",
+        "宝贝ID": "商品ID",
+        "商品名称": "商品名称",
+        "品名": "商品名称",
+        "货号": "商家编码",
+        "商家编码": "商家编码",
+        "SKU": "商家编码",
+        "SKU编码": "商家编码",
+        "规格": "SKU规格",
+        "规格名称": "SKU规格",
+        "SKU规格": "SKU规格",
+        "支付件数": "数量",
+        "件数": "数量",
+        "数量": "数量",
+        "支付订单数": "订单数",
+        "订单数": "订单数",
+        "快递单量": "订单数",
+        "单品结余": "单品结余",
+        "单品盈亏": "单品结余",
+        "盈亏": "单品结余",
+        "结余": "单品结余",
+        "支付金额": "支付金额",
+        "订单实付": "支付金额",
+        "商家收入": "支付金额",
+        "成功退款金额": "成功退款金额",
+        "成功退款金额(元)": "成功退款金额",
+        "总退款金额": "成功退款金额",
+        "退款金额": "成功退款金额",
+        "推广花费": "推广花费",
+        "推广花": "推广花费",
+        "推广费": "推广花费",
+        "投流托管花费": "推广花费",
+        "投流推广花费": "推广花费",
+        "货总价": "货总价",
+        "货品成本": "货总价",
+        "成本": "货总价",
+    }
+    return aliases.get(text, text)
+
+
 def _filter_category_sku_rows(detail: pd.DataFrame) -> pd.DataFrame:
-    if detail.empty or "sku_norm" not in detail.columns:
+    if detail.empty:
         return detail
-    sku_text = detail["sku_norm"].fillna("").astype(str).str.upper()
+    text_columns = [
+        column
+        for column in ["sku_norm", "sku_code", "sku_spec", "product_name", "product_id"]
+        if column in detail.columns
+    ]
+    if not text_columns:
+        return detail
+    sku_text = (
+        detail[text_columns]
+        .fillna("")
+        .astype(str)
+        .agg(" ".join, axis=1)
+        .str.upper()
+    )
     mask = sku_text.apply(lambda value: any(keyword in value for keyword in CATEGORY_SKU_KEYWORDS))
+    if "store" in detail.columns:
+        store_names = detail["store"].fillna("").astype(str).map(normalize_store_name)
+        for store_name, keywords in CATEGORY_STORE_NAME_KEYWORDS.items():
+            store_mask = store_names.eq(store_name)
+            if store_mask.any():
+                mask = mask | (
+                    store_mask
+                    & sku_text.apply(lambda value: any(keyword in value for keyword in keywords))
+                )
     return detail[mask].copy()
 
 
@@ -1188,11 +1262,13 @@ def load_report_sku_detail(store: str, workbook_path: Path) -> pd.DataFrame:
         header_idx = None
         columns: dict[str, int] | None = None
         for index, row in enumerate(rows[:25]):
-            mapping = {
-                str(value).strip(): col_index
-                for col_index, value in enumerate(row)
-                if value is not None and str(value).strip()
-            }
+            mapping: dict[str, int] = {}
+            for col_index, value in enumerate(row):
+                if value is None or not str(value).strip():
+                    continue
+                raw_name = str(value).strip()
+                mapping[raw_name] = col_index
+                mapping.setdefault(_normalize_report_header(raw_name), col_index)
             if {"商品ID", "数量", "单品结余"}.issubset(mapping):
                 header_idx = index
                 columns = mapping
@@ -1201,12 +1277,14 @@ def load_report_sku_detail(store: str, workbook_path: Path) -> pd.DataFrame:
             continue
 
         product_col = columns["商品ID"]
-        sku_col = _column_index(columns, "货号", "商家编码")
+        product_name_col = _column_index(columns, "商品名称")
+        sku_col = _column_index(columns, "商家编码", "货号", "SKU", "SKU编码")
+        spec_col = _column_index(columns, "SKU规格", "规格名称", "规格")
         qty_col = columns["数量"]
         order_col = _column_index(columns, "订单数", "快递单量")
         profit_col = columns["单品结余"]
         pay_col = _column_index(columns, "支付金额")
-        refund_col = _column_index(columns, "成功退款金额", "成功退款金额(元)", "总退款金额")
+        refund_col = _column_index(columns, "成功退款金额", "成功退款金额(元)", "总退款金额", "退款金额")
         ad_col = _column_index(columns, "推广花费", "推广花", "推广费", "投流托管花费", "投流推广花费")
         cost_col = _column_index(columns, "货总价", "货品成本", "成本")
 
@@ -1214,7 +1292,9 @@ def load_report_sku_detail(store: str, workbook_path: Path) -> pd.DataFrame:
             col
             for col in [
                 product_col,
+                product_name_col,
                 sku_col,
+                spec_col,
                 qty_col,
                 order_col,
                 profit_col,
@@ -1230,7 +1310,13 @@ def load_report_sku_detail(store: str, workbook_path: Path) -> pd.DataFrame:
                 continue
             product_id = "" if row[product_col] is None else str(row[product_col]).strip()
             sku_code = "" if sku_col is None or row[sku_col] is None else str(row[sku_col]).strip()
-            if not product_id and not sku_code:
+            sku_spec = "" if spec_col is None or row[spec_col] is None else str(row[spec_col]).strip()
+            product_name = (
+                ""
+                if product_name_col is None or row[product_name_col] is None
+                else str(row[product_name_col]).strip()
+            )
+            if not product_id and not sku_code and not sku_spec:
                 continue
             if product_id in {"合计", "总计", "小计"} or sku_code in {"合计", "总计", "小计"}:
                 continue
@@ -1247,7 +1333,9 @@ def load_report_sku_detail(store: str, workbook_path: Path) -> pd.DataFrame:
                     "date": sheet_date,
                     "sheet": sheet_name,
                     "product_id": product_id,
+                    "product_name": product_name,
                     "sku_code": sku_code,
+                    "sku_spec": sku_spec,
                     "sku_norm": _normalize_category_sku_code(sku_code),
                     "sales_qty": sales_qty,
                     "order_count": _number_from_cell(row[order_col]) if order_col is not None else 0.0,
@@ -1270,6 +1358,8 @@ def build_category_mapping_candidates(store: str, workbook_path: Path) -> pd.Dat
     candidates = (
         detail.groupby(["store", "product_id", "sku_code", "sku_norm"], as_index=False)
         .agg(
+            商品名称=("product_name", "first"),
+            SKU规格=("sku_spec", "first"),
             出现天数=("date", "nunique"),
             明细行数=("source_row", "count"),
             支付金额=("pay_amount", "sum"),
@@ -1282,11 +1372,14 @@ def build_category_mapping_candidates(store: str, workbook_path: Path) -> pd.Dat
             "店铺": candidates["store"],
             "商品ID": candidates["product_id"],
             "商家编码": candidates["sku_code"],
-            "商品简称": "",
+            "商品简称": candidates["商品名称"].where(
+                candidates["商品名称"].astype(str).str.strip().ne(""),
+                candidates["SKU规格"],
+            ),
             "一级品类": "",
             "二级品类": "",
             "是否启用": "是",
-            "备注": "",
+            "备注": candidates["SKU规格"].map(lambda value: f"规格：{value}" if str(value).strip() else ""),
         }
     )
 
@@ -2593,6 +2686,100 @@ def render_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 300, f
     )
 
 
+def render_store_pay_amount_trend(data: pd.DataFrame, title: str, height: int = 300, fullscreen_key: str | None = None) -> None:
+    del height
+    required = {"date", "store", "pay_amount"}
+    if data.empty or not required.issubset(data.columns):
+        st.markdown(
+            f'<div class="svg-chart-card"><div class="svg-chart-title">{escape(title)}</div>暂无数据</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    data = data.copy()
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    data["pay_amount"] = pd.to_numeric(data["pay_amount"], errors="coerce").fillna(0.0)
+    data = data.dropna(subset=["date"])
+    if data.empty:
+        st.markdown(
+            f'<div class="svg-chart-card"><div class="svg-chart-title">{escape(title)}</div>暂无数据</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    pivot = (
+        data.groupby(["date", "store"], as_index=False)["pay_amount"]
+        .sum()
+        .pivot(index="date", columns="store", values="pay_amount")
+        .sort_index()
+        .fillna(0.0)
+    )
+    pivot["整体"] = pivot.sum(axis=1)
+    store_columns = [col for col in pivot.columns if col != "整体"]
+    ordered_columns = ["整体", *sorted(store_columns, key=lambda col: float(pivot[col].sum()), reverse=True)]
+
+    width, chart_height, pad = 640, 230, 54
+    dates = pivot.index.tolist()
+    axis_high = max(float(pivot[ordered_columns].max().max()) if ordered_columns else 0.0, 1.0) * 1.12
+    palette = ["#0ea5e9", "#16a34a", "#f97316", "#8b5cf6", "#ef4444", "#14b8a6", "#64748b", "#f59e0b"]
+    paths: list[str] = []
+    hover_points = ""
+    legend_items: list[str] = []
+    label_items: list[str] = []
+    dates_for_series = dates
+    for index, column in enumerate(ordered_columns):
+        color = palette[index % len(palette)]
+        values = [float(value) for value in pivot[column].tolist()]
+        series_values, series_dates = _ensure_chart_series(values, dates_for_series)
+        coords = _line_coords(series_values, width, chart_height, pad, 0.0, axis_high)
+        dash = ' stroke-dasharray="6 5"' if column != "整体" else ""
+        stroke_width = "3.2" if column == "整体" else "2.4"
+        paths.append(
+            f'<path fill="none" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round" '
+            f'stroke-linejoin="round"{dash} d="{_smooth_path(coords)}" />'
+        )
+        hover_points += _svg_hover_points(coords, series_dates, series_values, str(column), color, _format_money)
+        legend_items.append(f'<span><i class="legend-dot" style="background:{color}"></i>{escape(str(column))}</span>')
+        if coords:
+            label_x, label_y = coords[-1]
+            if index < 4:
+                label_items.append(
+                    f'<text x="{min(label_x + 8, 584):.1f}" y="{min(max(label_y - 8 + index * 10, 18), 216):.1f}" '
+                    f'class="svg-chart-label">{escape(str(column))} {_format_money(series_values[-1])}</text>'
+                )
+
+    tick_data = pd.DataFrame({"date": dates})
+    tick_html = "".join(
+        f'<text x="{x:.1f}" y="204" text-anchor="middle" class="svg-chart-label">{escape(label)}</text>'
+        for x, label in _chart_ticks(tick_data)
+    )
+    st.markdown(
+        f"""
+<div class="svg-chart-card">
+  {_chart_fullscreen_link(fullscreen_key, title)}
+  <div class="svg-chart-title">{escape(title)}</div>
+  <div class="svg-chart-legend svg-chart-legend-wrap">
+    {''.join(legend_items)}
+  </div>
+  <svg viewBox="0 0 {width} {chart_height}" preserveAspectRatio="xMidYMid meet">
+    <line x1="{pad}" y1="190" x2="610" y2="190" stroke="#cbd5e1" stroke-width="1" />
+    <line x1="{pad}" y1="38" x2="610" y2="38" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="114" x2="610" y2="114" stroke="#e2e8f0" stroke-width="1" />
+    <line x1="{pad}" y1="38" x2="{pad}" y2="190" stroke="#cbd5e1" stroke-width="1" />
+    <text x="10" y="42" class="svg-chart-label">{_compact_number(axis_high)}</text>
+    <text x="10" y="194" class="svg-chart-label">0</text>
+    {''.join(paths)}
+    {hover_points}
+    {''.join(label_items)}
+    <text x="610" y="28" text-anchor="end" class="svg-chart-label">最高 {_format_money(float(pivot[ordered_columns].max().max()))}</text>
+    {tick_html}
+  </svg>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_profit_trend(data: pd.DataFrame, title: str, height: int = 300, fullscreen_key: str | None = None) -> None:
     del height
     if data.empty:
@@ -2657,6 +2844,8 @@ def _render_chart_by_kind(
 ) -> None:
     if kind == "pay":
         render_pay_amount_trend(data, title, height, fullscreen_key)
+    elif kind == "store_pay":
+        render_store_pay_amount_trend(data, title, height, fullscreen_key)
     elif kind == "sales_orders":
         render_sales_orders_trend(data, title, height, fullscreen_key)
     else:
@@ -3337,16 +3526,22 @@ def render_overall_business_section(
 
     st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
 
+    start_date, end_date = _period_window(all_daily, trend_range, custom_range)
+    period_rows = all_daily[(all_daily["date"] >= start_date) & (all_daily["date"] <= end_date)].copy()
+    store_pay_trend = (
+        period_rows.groupby(["date", "store"], as_index=False)
+        .agg(pay_amount=("pay_amount", "sum"))
+        .sort_values(["date", "store"], ignore_index=True)
+    )
+
     chart_cols = st.columns(3)
     with chart_cols[0]:
-        render_chart_with_fullscreen("pay", "overall_pay", "整体支付金额折线图", trend_all, height=300)
+        render_chart_with_fullscreen("store_pay", "overall_pay", "整体/分店支付金额折线图", store_pay_trend, height=300)
     with chart_cols[1]:
         render_chart_with_fullscreen("sales_orders", "overall_sales_orders", "整体订单数与件数折线图", trend_all, height=300)
     with chart_cols[2]:
         render_chart_with_fullscreen("profit", "overall_profit", "整体盈亏柱状趋势图", trend_all, height=300)
 
-    start_date, end_date = _period_window(all_daily, trend_range, custom_range)
-    period_rows = all_daily[(all_daily["date"] >= start_date) & (all_daily["date"] <= end_date)].copy()
     if period_rows.empty:
         return
     store_summary = (
@@ -3452,39 +3647,6 @@ def render_category_overview_section(
     metric_cols[1].metric("统计 SKU", f"{detail[['product_id', 'sku_norm']].drop_duplicates().shape[0]:,.0f}")
     metric_cols[2].metric("未分类 SKU", f"{len(unmapped_keys):,.0f}")
     metric_cols[3].metric("品类总盈亏", _format_money(float(category_summary["盈亏"].sum())))
-
-    chart_cols = st.columns([1, 1])
-    with chart_cols[0]:
-        chart_data = category_summary.sort_values("支付金额", ascending=True)
-        fig = go.Figure(
-            go.Bar(
-                x=chart_data["支付金额"],
-                y=chart_data["一级品类"],
-                orientation="h",
-                marker_color="#0ea5e9",
-                text=[_format_money(float(value)) for value in chart_data["支付金额"]],
-                textposition="outside",
-                hovertemplate="品类 %{y}<br>支付 %{x:,.2f}<extra></extra>",
-            )
-        )
-        style_chart_card(fig, "品类支付金额排行", 300)
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-    with chart_cols[1]:
-        chart_data = category_summary.sort_values("盈亏", ascending=True)
-        colors = ["#16a34a" if value >= 0 else "#dc2626" for value in chart_data["盈亏"]]
-        fig = go.Figure(
-            go.Bar(
-                x=chart_data["盈亏"],
-                y=chart_data["一级品类"],
-                orientation="h",
-                marker_color=colors,
-                text=[_format_money(float(value)) for value in chart_data["盈亏"]],
-                textposition="outside",
-                hovertemplate="品类 %{y}<br>盈亏 %{x:,.2f}<extra></extra>",
-            )
-        )
-        style_chart_card(fig, "品类盈亏排行", 300)
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     table = category_summary[
         ["一级品类", "支付金额", "订单数", "件数", "退款金额", "退款率", "推广费", "货品成本", "盈亏", "ROI", "SKU数", "商品数"]
@@ -3719,13 +3881,6 @@ store_trend = (
 )
 trend_store = filter_trend_range(store_trend, trend_range, store_custom_range)
 render_store_overview_section(selected_store, store_daily, trend_range, trend_store, store_custom_range)
-render_category_overview_section(
-    selected_store,
-    sources.get(selected_store),
-    all_daily,
-    trend_range,
-    store_custom_range,
-)
 
 st.markdown("## 商品概览")
 

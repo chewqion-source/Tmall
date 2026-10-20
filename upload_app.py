@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from data_loader import STORE_FILE_PATTERNS, find_store_workbooks
+from report_feedback import analyze_uploaded_report_dates, send_report_feedback_messages
 from upload_manager import install_uploaded_workbooks
 from ui_helpers import ai_image_url, dashboard_url as default_dashboard_url, koc_url, roi_url, sidebar_link
 
@@ -94,6 +95,73 @@ if submitted:
             for result in results
         ]
         st.dataframe(pd.DataFrame(result_rows), width="stretch", hide_index=True)
+
+        feedback_items = []
+        for result in results:
+            try:
+                feedback_dates = (
+                    [max(result.changed_dates)]
+                    if result.changed_dates
+                    else [result.end_date]
+                )
+                feedback_items.extend(
+                    analyze_uploaded_report_dates(
+                        result.store,
+                        data_dir / result.saved_name,
+                        feedback_dates,
+                    )
+                )
+            except Exception as exc:
+                st.warning(f"{result.store} 导入反馈分析失败：{exc}")
+
+        if feedback_items:
+            st.subheader("日报导入反馈")
+            try:
+                sent_count = send_report_feedback_messages(feedback_items)
+                if sent_count:
+                    st.caption("已发送 1 条日报反馈到飞书群。")
+            except Exception as exc:
+                st.warning(f"日报反馈已生成，但飞书发送失败：{exc}")
+            for item in feedback_items:
+                with st.expander(
+                    f"{item.store}｜{item.date} 对比 {item.previous_date or '昨日'}",
+                    expanded=True,
+                ):
+                    if not item.has_previous:
+                        st.info(item.message)
+                        continue
+                    st.markdown("**基础数据变化**")
+                    st.dataframe(
+                        item.summary,
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "今日": st.column_config.NumberColumn(format="%.2f"),
+                            "昨日": st.column_config.NumberColumn(format="%.2f"),
+                            "变化": st.column_config.NumberColumn(format="%.2f"),
+                            "变化率": st.column_config.NumberColumn(format="%.1%%"),
+                        },
+                    )
+                    st.markdown("**波动明显商品**")
+                    st.dataframe(
+                        item.products,
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "今日盈亏": st.column_config.NumberColumn(format="¥%.2f"),
+                            "昨日盈亏": st.column_config.NumberColumn(format="¥%.2f"),
+                            "盈亏变化": st.column_config.NumberColumn(format="¥%.2f"),
+                            "支付变化": st.column_config.NumberColumn(format="¥%.2f"),
+                            "推广变化": st.column_config.NumberColumn(format="¥%.2f"),
+                            "退款变化": st.column_config.NumberColumn(format="¥%.2f"),
+                            "件数变化": st.column_config.NumberColumn(format="%.0f"),
+                        },
+                    )
+                    if item.suggestions:
+                        st.markdown("**调整建议**")
+                        for suggestion in item.suggestions:
+                            st.write(f"- {suggestion}")
+
         st.link_button("打开主看板", dashboard_url, width="stretch")
 
 with st.expander("上传规则与数据安全"):

@@ -28,6 +28,7 @@ shops.json
 config.json
 config/feishu_webhook.json
 config/realtime_feishu_webhook.json
+config/report_feedback_feishu_webhook.json
 config/sku_cost.xlsx
 config/backups/
 cost_config.csv
