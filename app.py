@@ -68,12 +68,14 @@ CATEGORY_MAPPING_HEADERS = [
     "是否启用",
     "备注",
 ]
+CATEGORY_CODE_PATTERN = re.compile(r"(?i)(?:kuku|kukuna)|(?:^|[^0-9])(?:401|402|403|404|405|406)(?:[^0-9]|$)")
 OLD_ZY_STORE_NAME = "坐拥" + "宁静"
 SHOP_NAME_ALIASES = {
     OLD_ZY_STORE_NAME: "坐拥_宁静",
+    "盲盒抖音": "盲盒抖店",
 }
 DEFAULT_STORE_OPTIONS = ["易丽洁", "咖时光", "坐拥_宁静", "国货严选", "盲盒抖店", "盲盒千帆"]
-BLIND_BOX_CATEGORY_STORES = ["坐拥_宁静"]
+BLIND_BOX_CATEGORY_STORES = ["坐拥_宁静", "国货严选", "盲盒抖店"]
 DATA_DIR = Path(os.environ.get("TMALL_DATA_DIR", Path(__file__).resolve().parent / "data"))
 SKU_COST_PATH = Path(os.environ.get("SKU_COST_FILE", DATA_DIR / "sku_cost.xlsx"))
 CATEGORY_MAPPING_PATH = Path(os.environ.get("CATEGORY_MAPPING_FILE", DATA_DIR / "category_mapping.xlsx"))
@@ -226,6 +228,19 @@ def inject_dashboard_styles() -> None:
 }
 .metric-chart-gap {
     height: 18px;
+}
+div[class*="st-key-store_date_range_range_"],
+div[class*="st-key-overall_date_range_range_"],
+div[class*="st-key-product_date_range_range_"] {
+    width: auto !important;
+}
+div[class*="st-key-store_date_range_range_"] button,
+div[class*="st-key-overall_date_range_range_"] button,
+div[class*="st-key-product_date_range_range_"] button {
+    min-height: 40px;
+    min-width: 74px;
+    padding-left: 14px;
+    padding-right: 14px;
 }
 .agent-status-pill {
     position: fixed;
@@ -468,6 +483,7 @@ def inject_dashboard_styles() -> None:
     border-radius: 8px;
 }
 div[class*="st-key-store_date_range_range_"] button,
+div[class*="st-key-overall_date_range_range_"] button,
 div[class*="st-key-product_date_range_range_"] button {
     width: 74px !important;
     min-width: 74px !important;
@@ -481,6 +497,7 @@ div[class*="st-key-product_date_range_range_"] button {
     box-shadow: none;
 }
 div[class*="st-key-store_date_range_range_"] button[kind="primary"],
+div[class*="st-key-overall_date_range_range_"] button[kind="primary"],
 div[class*="st-key-product_date_range_range_"] button[kind="primary"] {
     box-shadow: 0 8px 18px rgba(255, 73, 79, .20);
 }
@@ -688,6 +705,8 @@ def _range_days(range_label: str) -> int:
         "昨日": 1,
         "近7天": 7,
         "近30天": 30,
+        "近半年": 183,
+        "近1年": 365,
     }.get(range_label, 30)
 
 
@@ -718,11 +737,48 @@ def _default_date_range_for_label(
     return start_date, end_date
 
 
+def _available_month_options(data: pd.DataFrame) -> list[tuple[str, pd.Timestamp, pd.Timestamp]]:
+    if data.empty or "date" not in data.columns:
+        return []
+    dates = pd.to_datetime(data["date"], errors="coerce").dropna()
+    if dates.empty:
+        return []
+    months = sorted(dates.dt.to_period("M").unique())
+    options: list[tuple[str, pd.Timestamp, pd.Timestamp]] = []
+    for period in months:
+        start_date = pd.Timestamp(period.start_time).normalize()
+        end_date = pd.Timestamp(period.end_time).normalize()
+        label = f"{period.year}年{period.month}月"
+        options.append((label, start_date, end_date))
+    return options
+
+
+def _render_month_range_controls(
+    data: pd.DataFrame,
+    key_prefix: str,
+) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    options = _available_month_options(data)
+    if not options:
+        st.caption("暂无可选月份")
+        return None
+    labels = [label for label, _, _ in options]
+    month_key = f"{key_prefix}_month"
+    if month_key not in st.session_state or st.session_state[month_key] not in labels:
+        st.session_state[month_key] = labels[-1]
+    selected_label = st.selectbox("选择月份", labels, index=labels.index(st.session_state[month_key]), key=month_key)
+    for label, start_date, end_date in options:
+        if label == selected_label:
+            return start_date, end_date
+    return options[-1][1], options[-1][2]
+
+
 def _render_date_range_controls(
     data: pd.DataFrame,
     range_label: str,
     key_prefix: str,
 ) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    if range_label == "整月":
+        return _render_month_range_controls(data, key_prefix)
     if range_label != "自定义":
         return None
     bounds = _available_date_bounds(data)
@@ -780,14 +836,14 @@ def _render_time_range_selector(
 
     selected = str(st.session_state[range_key])
     st.caption("选择时间")
-    option_columns = st.columns([0.32, 0.32, 0.34, 0.36, 2.2])
+    option_columns = st.columns([0.44, 0.52, 0.58, 0.62, 0.56, 0.58, 0.58, 2.1], gap="small")
     for index, option in enumerate(TREND_RANGE_OPTIONS):
         with option_columns[index]:
             if st.button(
                 option,
                 key=f"{key_prefix}_range_{index}",
                 type="primary" if selected == option else "secondary",
-                width=74,
+                width="content",
             ):
                 st.session_state[range_key] = option
                 selected = option
@@ -1019,6 +1075,13 @@ def normalize_store_column(data: pd.DataFrame, column: str = "店铺") -> pd.Dat
     return normalized
 
 
+def normalize_workbook_sources(sources: dict[str, Path]) -> dict[str, Path]:
+    normalized: dict[str, Path] = {}
+    for store, path in sources.items():
+        normalized[normalize_store_name(store)] = path
+    return normalized
+
+
 def load_sku_cost_frame(path: Path = SKU_COST_PATH) -> pd.DataFrame:
     if not path.exists():
         return _empty_sku_cost_frame()
@@ -1081,6 +1144,54 @@ def _normalize_category_sku_code(value: object) -> str:
     return str(value or "").strip().upper().replace(" ", "")
 
 
+def _is_category_sku_code(value: object) -> bool:
+    normalized = str(value or "").strip()
+    return bool(CATEGORY_CODE_PATTERN.search(normalized))
+
+
+def filter_category_sku_detail(detail: pd.DataFrame) -> pd.DataFrame:
+    if detail.empty or "sku_code" not in detail.columns:
+        return detail.copy()
+    return detail[detail["sku_code"].map(_is_category_sku_code)].copy()
+
+
+def allocate_category_detail_financials(detail: pd.DataFrame) -> pd.DataFrame:
+    if detail.empty:
+        return detail.copy()
+
+    allocated = detail.copy()
+    for column in ["pay_amount", "refund_amount", "order_count", "goods_cost", "profit", "sales_qty"]:
+        if column not in allocated.columns:
+            allocated[column] = 0.0
+        allocated[column] = pd.to_numeric(allocated[column], errors="coerce").fillna(0.0)
+
+    pieces: list[pd.DataFrame] = []
+    for _, group in allocated.groupby(["date", "product_id"], dropna=False, sort=False):
+        group = group.copy()
+        total_goods_cost = float(group["goods_cost"].sum())
+        total_qty = float(group["sales_qty"].sum())
+        if total_goods_cost > 0:
+            share = group["goods_cost"] / total_goods_cost
+        elif total_qty > 0:
+            share = group["sales_qty"] / total_qty
+        else:
+            share = pd.Series([1 / len(group)] * len(group), index=group.index)
+
+        total_pay = float(group["pay_amount"].sum())
+        total_refund = float(group["refund_amount"].sum())
+        total_orders = float(group["order_count"].sum())
+        total_profit = float(group["profit"].sum())
+        non_goods_profit = total_profit + total_goods_cost
+
+        group["pay_amount"] = total_pay * share
+        group["refund_amount"] = total_refund * share
+        group["order_count"] = total_orders * share
+        group["profit"] = non_goods_profit * share - group["goods_cost"]
+        pieces.append(group)
+
+    return pd.concat(pieces, ignore_index=True) if pieces else allocated
+
+
 def load_category_mapping_frame(path: Path = CATEGORY_MAPPING_PATH) -> pd.DataFrame:
     if not path.exists():
         return _empty_category_mapping_frame()
@@ -1093,6 +1204,10 @@ def load_category_mapping_frame(path: Path = CATEGORY_MAPPING_PATH) -> pd.DataFr
         data[column] = data[column].fillna("").astype(str).str.strip()
     data = normalize_store_column(data)
     data["是否启用"] = data["是否启用"].replace("", "是")
+    data = data[
+        data["店铺"].isin(BLIND_BOX_CATEGORY_STORES)
+        & data["商家编码"].map(_is_category_sku_code)
+    ].copy()
     return data
 
 
@@ -1114,6 +1229,10 @@ def save_category_mapping_frame(data: pd.DataFrame, path: Path = CATEGORY_MAPPIN
         cleaned[column] = cleaned[column].fillna("").astype(str).str.strip()
     cleaned = normalize_store_column(cleaned)
     cleaned["是否启用"] = cleaned["是否启用"].replace("", "是")
+    cleaned = cleaned[
+        cleaned["店铺"].isin(BLIND_BOX_CATEGORY_STORES)
+        & cleaned["商家编码"].map(_is_category_sku_code)
+    ].copy()
     has_key = cleaned["店铺"].ne("") & (
         cleaned["商品ID"].ne("") | cleaned["商家编码"].ne("")
     )
@@ -1223,10 +1342,14 @@ def load_report_sku_detail(store: str, workbook_path: Path) -> pd.DataFrame:
             ]
             if col is not None
         )
+        current_product_id = ""
         for row_number, row in enumerate(rows[header_idx + 1 :], start=header_idx + 2):
             if len(row) <= max_col:
                 continue
-            product_id = "" if row[product_col] is None else str(row[product_col]).strip()
+            raw_product_id = "" if row[product_col] is None else str(row[product_col]).strip()
+            if raw_product_id:
+                current_product_id = raw_product_id
+            product_id = raw_product_id or current_product_id
             sku_code = "" if sku_col is None or row[sku_col] is None else str(row[sku_col]).strip()
             if not product_id and not sku_code:
                 continue
@@ -1262,6 +1385,8 @@ def load_report_sku_detail(store: str, workbook_path: Path) -> pd.DataFrame:
 
 def build_category_mapping_candidates(store: str, workbook_path: Path) -> pd.DataFrame:
     detail = load_report_sku_detail(store, workbook_path)
+    detail = filter_category_sku_detail(detail)
+    detail = allocate_category_detail_financials(detail)
     if detail.empty:
         return pd.DataFrame(columns=CATEGORY_MAPPING_HEADERS)
     candidates = (
@@ -1315,6 +1440,8 @@ def build_category_daily(
     product_daily: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     detail = load_report_sku_detail(store, workbook_path)
+    detail = filter_category_sku_detail(detail)
+    detail = allocate_category_detail_financials(detail)
     if detail.empty:
         return pd.DataFrame(), pd.DataFrame()
 
@@ -2120,17 +2247,17 @@ def render_sku_cost_manager() -> None:
 def render_category_mapping_manager() -> None:
     st.title("品类映射维护")
     st.caption(f"当前文件：{CATEGORY_MAPPING_PATH}")
-    st.info("当前先接入坐拥_宁静。这里使用财务日报明细，不使用实时抓取数据。")
+    st.info("当前接入坐拥_宁静、国货严选、盲盒抖店。这里只统计商家编码包含 KUKU/kukuna 的 SKU，使用财务日报明细，不使用实时抓取数据。")
 
     try:
-        sources = find_store_workbooks()
+        sources = normalize_workbook_sources(find_store_workbooks())
     except Exception as exc:
         sources = {}
         st.warning(f"读取日报文件列表失败：{exc}")
 
     stores = [store for store in BLIND_BOX_CATEGORY_STORES if store in sources]
     if not stores:
-        st.warning("当前没有找到坐拥_宁静日报文件，无法自动生成映射候选。")
+        st.warning("当前没有找到可用于品类映射的日报文件，无法自动生成映射候选。")
         stores = BLIND_BOX_CATEGORY_STORES
 
     selected_store = st.selectbox("店铺", stores, index=0)
@@ -2188,7 +2315,7 @@ def render_category_mapping_manager() -> None:
                 st.success(f"已批量填写 {len(target_ids)} 行。")
                 st.rerun()
 
-    st.caption("建议按 商品ID + 商家编码 维护品类。保存后，店铺与商品页面会按日报明细重新汇总品类。")
+    st.caption("建议按 商品ID + 商家编码 维护品类。候选只包含 KUKU/kukuna 系列 SKU，保存后会按日报明细重新汇总品类。")
     edited = st.data_editor(
         view[CATEGORY_MAPPING_HEADERS + ["_row_id"]],
         hide_index=True,
@@ -2273,7 +2400,7 @@ def load_product_thumbnails(store: str) -> dict[str, str]:
     return thumbnails
 
 
-TREND_RANGE_OPTIONS = ("昨日", "近7天", "近30天", "自定义")
+TREND_RANGE_OPTIONS = ("昨日", "近7天", "近30天", "近半年", "近1年", "整月", "自定义")
 CHART_CARD_MARGIN = dict(l=14, r=14, t=36, b=18)
 
 
@@ -2320,7 +2447,11 @@ def filter_trend_range(
     custom_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
 ) -> pd.DataFrame:
     latest_date = data["date"].max()
-    if custom_range is not None:
+    if custom_range is not None or range_label == "整月":
+        if custom_range is None:
+            custom_range = _default_date_range_for_label(data, "近30天")
+        if custom_range is None:
+            return data.tail(1)
         start_date, end_date = custom_range
         filtered = data[(data["date"] >= start_date) & (data["date"] <= end_date)]
     elif range_label == "昨日":
@@ -2329,6 +2460,8 @@ def filter_trend_range(
         days_by_label = {
             "近7天": 7,
             "近30天": 30,
+            "近半年": 183,
+            "近1年": 365,
         }
         days = days_by_label.get(range_label, 30)
         start_date = latest_date - pd.Timedelta(days=days - 1)
@@ -3226,6 +3359,52 @@ def render_realtime_data_section(realtime_daily: pd.DataFrame, all_daily: pd.Dat
         )
 
 
+def render_overall_operation_section(all_daily: pd.DataFrame) -> None:
+    st.markdown("## 整体经营数据")
+    st.caption("基于所有店铺财务日报汇总统计，不使用实时抓取数据。")
+    if all_daily.empty:
+        st.warning("暂无可统计的日报数据。")
+        return
+
+    trend_range, custom_range = _render_time_range_selector(all_daily, "overall_date_range")
+    current, deltas = _period_metrics(all_daily, trend_range, custom_range)
+    metric_cols = st.columns(8)
+    cards = [
+        ("支付金额", _format_money(current["pay_amount"]), deltas["pay_amount"], "neutral"),
+        ("客单价", _format_money(current["average_order_value"]), deltas["average_order_value"], "neutral"),
+        ("订单数", f"{current['order_count']:,.0f}", deltas["order_count"], "neutral"),
+        ("件数", f"{current['sales_qty']:,.0f}", deltas["sales_qty"], "neutral"),
+        ("盈亏", _format_money(current["profit"]), deltas["profit"], profit_tone(current["profit"])),
+        ("退款金额", _format_money(current["refund_amount"]), deltas["refund_amount"], "neutral"),
+        ("退款率", f"{current['refund_rate']:.1%}", deltas["refund_rate"], "neutral"),
+        ("ROI", _format_roi(current["roi"]), deltas["roi"], profit_tone(current["roi"])),
+    ]
+    for column, (label, value, delta, tone) in zip(metric_cols, cards):
+        with column:
+            metric_card(label, value, delta, tone)
+
+    overall_trend = (
+        all_daily.groupby("date", as_index=False)
+        .agg(
+            pay_amount=("pay_amount", "sum"),
+            sales_qty=("sales_qty", "sum"),
+            order_count=("order_count", "sum"),
+            profit=("profit", "sum"),
+        )
+        .sort_values("date", ignore_index=True)
+    )
+    trend_data = filter_trend_range(overall_trend, trend_range, custom_range)
+
+    st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
+    chart_cols = st.columns(3)
+    with chart_cols[0]:
+        render_chart_with_fullscreen("pay", "overall_pay", "整体支付金额折线图", trend_data, height=300)
+    with chart_cols[1]:
+        render_chart_with_fullscreen("sales_orders", "overall_sales_orders", "整体订单数与件数折线图", trend_data, height=300)
+    with chart_cols[2]:
+        render_chart_with_fullscreen("profit", "overall_profit", "整体盈亏柱状趋势图", trend_data, height=300)
+
+
 def render_store_overview_section(
     selected_store: str,
     store_daily: pd.DataFrame,
@@ -3270,7 +3449,7 @@ def render_category_overview_section(
     if selected_store not in BLIND_BOX_CATEGORY_STORES:
         return
     st.markdown("## 品类概览")
-    st.caption("基于财务日报明细统计，不使用实时抓取数据。当前先接入坐拥_宁静。")
+    st.caption("基于财务日报明细统计，不使用实时抓取数据；只统计商家编码包含 KUKU/kukuna 的 SKU。")
     if workbook_path is None:
         st.warning("没有找到该店铺日报，暂时无法统计品类。")
         return
@@ -3321,42 +3500,85 @@ def render_category_overview_section(
 
     unmapped_keys = detail[detail["一级品类"].eq("未分类")][["product_id", "sku_norm"]].drop_duplicates()
     metric_cols = st.columns(4)
-    metric_cols[0].metric("品类数", f"{category_summary['一级品类'].nunique():,.0f}")
-    metric_cols[1].metric("统计 SKU", f"{detail[['product_id', 'sku_norm']].drop_duplicates().shape[0]:,.0f}")
-    metric_cols[2].metric("未分类 SKU", f"{len(unmapped_keys):,.0f}")
-    metric_cols[3].metric("品类总盈亏", _format_money(float(category_summary["盈亏"].sum())))
+    total_category_profit = float(category_summary["盈亏"].sum())
+    category_cards = [
+        ("品类数", f"{category_summary['一级品类'].nunique():,.0f}", None, "neutral"),
+        ("统计 SKU", f"{detail[['product_id', 'sku_norm']].drop_duplicates().shape[0]:,.0f}", None, "neutral"),
+        ("未分类 SKU", f"{len(unmapped_keys):,.0f}", None, "bad" if len(unmapped_keys) else "good"),
+        ("品类总盈亏", _format_money(total_category_profit), None, profit_tone(total_category_profit)),
+    ]
+    for column, (label, value, delta, tone) in zip(metric_cols, category_cards):
+        with column:
+            metric_card(label, value, delta, tone)
 
+    st.markdown('<div class="metric-chart-gap"></div>', unsafe_allow_html=True)
+
+    category_chart_height = max(340, 72 + len(category_summary) * 46)
+    category_chart_bg = "#f3f4f6"
     chart_cols = st.columns([1, 1])
     with chart_cols[0]:
-        chart_data = category_summary.sort_values("支付金额", ascending=True)
+        chart_data = category_summary.sort_values("支付金额", ascending=False)
         fig = go.Figure(
-            go.Bar(
-                x=chart_data["支付金额"],
-                y=chart_data["一级品类"],
-                orientation="h",
-                marker_color="#0ea5e9",
-                text=[_format_money(float(value)) for value in chart_data["支付金额"]],
-                textposition="outside",
-                hovertemplate="品类 %{y}<br>支付 %{x:,.2f}<extra></extra>",
+            go.Pie(
+                labels=chart_data["一级品类"],
+                values=chart_data["支付金额"],
+                hole=0.52,
+                sort=False,
+                marker=dict(
+                    colors=["#2563eb", "#16a34a", "#f59e0b", "#8b5cf6", "#ef4444", "#14b8a6", "#64748b"]
+                ),
+                textinfo="label+percent",
+                textposition="inside",
+                insidetextorientation="radial",
+                hovertemplate="品类 %{label}<br>支付 ¥%{value:,.2f}<br>占比 %{percent}<extra></extra>",
             )
         )
-        style_chart_card(fig, "品类支付金额排行", 300)
+        style_chart_card(fig, "品类支付金额排行", category_chart_height)
+        fig.update_layout(
+            paper_bgcolor=category_chart_bg,
+            plot_bgcolor=category_chart_bg,
+            margin=dict(l=28, r=28, t=54, b=58),
+            showlegend=True,
+            legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center", font=dict(size=11, color="#475569")),
+            uniformtext_minsize=10,
+            uniformtext_mode="show",
+        )
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     with chart_cols[1]:
-        chart_data = category_summary.sort_values("盈亏", ascending=True)
+        chart_data = category_summary.sort_values("盈亏", ascending=True).copy()
+        chart_data["一级品类"] = chart_data["一级品类"].astype(str)
+        chart_data["盈亏绝对值"] = chart_data["盈亏"].abs()
         colors = ["#16a34a" if value >= 0 else "#dc2626" for value in chart_data["盈亏"]]
+        max_profit_abs = float(chart_data["盈亏绝对值"].max()) if not chart_data.empty else 0.0
         fig = go.Figure(
             go.Bar(
-                x=chart_data["盈亏"],
+                x=chart_data["盈亏绝对值"],
                 y=chart_data["一级品类"],
                 orientation="h",
                 marker_color=colors,
                 text=[_format_money(float(value)) for value in chart_data["盈亏"]],
                 textposition="outside",
-                hovertemplate="品类 %{y}<br>盈亏 %{x:,.2f}<extra></extra>",
+                cliponaxis=False,
+                customdata=chart_data["盈亏"],
+                hovertemplate="品类 %{y}<br>盈亏 ¥%{customdata:,.2f}<extra></extra>",
             )
         )
-        style_chart_card(fig, "品类盈亏排行", 300)
+        style_chart_card(fig, "品类盈亏排行", category_chart_height)
+        fig.update_layout(
+            paper_bgcolor=category_chart_bg,
+            plot_bgcolor=category_chart_bg,
+            margin=dict(l=58, r=132, t=54, b=46),
+        )
+        fig.update_xaxes(
+            title_text="盈亏金额绝对值",
+            rangemode="tozero",
+            range=[0, max_profit_abs * 1.22 if max_profit_abs > 0 else 1],
+        )
+        fig.update_yaxes(
+            type="category",
+            categoryorder="array",
+            categoryarray=chart_data["一级品类"].tolist(),
+        )
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     table = category_summary[
@@ -3459,7 +3681,7 @@ if page_mode == "品类映射":
     st.stop()
 
 try:
-    sources = find_store_workbooks()
+    sources = normalize_workbook_sources(find_store_workbooks())
     source_signature = tuple(
         (
             store,
@@ -3470,6 +3692,9 @@ try:
         for store, path in sources.items()
     )
     all_daily, sample = load_dashboard_data(source_signature, "four-stores-v4")
+    if not all_daily.empty:
+        all_daily = all_daily.copy()
+        all_daily["store"] = all_daily["store"].map(normalize_store_name)
 except Exception as exc:
     st.error(f"读取失败：{exc}")
     st.stop()
@@ -3488,72 +3713,84 @@ render_agent_status_light(realtime_status, realtime_generated_at)
 render_exception_alerts(realtime_daily, all_daily, realtime_status, realtime_generated_at)
 # Dashboard no longer shows local daemon status, last update, or manual trigger.
 
-rank_source = realtime_daily if not realtime_daily.empty else all_daily
-render_realtime_data_section(realtime_daily, all_daily, realtime_generated_at)
+overall_tab, dashboard_tab = st.tabs(["整体经营数据", "店铺与商品"])
 
-st.markdown("## 店铺概览")
-store_filter_cols = st.columns([1.1, 2.8])
-with store_filter_cols[0]:
-    selected_store = st.selectbox("店铺名称", list(sources), index=0)
-store_daily = all_daily[all_daily["store"] == selected_store].copy()
-with store_filter_cols[1]:
-    trend_range, store_custom_range = _render_time_range_selector(store_daily, "store_date_range")
-complete = complete_daily_series(store_daily)
-summary = build_summary(store_daily, complete)
-products = summary["product_id"].tolist()
-product_select_labels = _product_select_labels(selected_store, products)
+with overall_tab:
+    render_overall_operation_section(all_daily)
 
-store_trend = (
-    store_daily.groupby(["date", "sheet"], as_index=False)
-    .agg(
-        pay_amount=("pay_amount", "sum"),
-        sales_qty=("sales_qty", "sum"),
-        order_count=("order_count", "sum"),
-        profit=("profit", "sum"),
+with dashboard_tab:
+    render_realtime_data_section(realtime_daily, all_daily, realtime_generated_at)
+
+    st.markdown("## 店铺概览")
+    store_filter_cols = st.columns([1.1, 2.8])
+    with store_filter_cols[0]:
+        selected_store = st.selectbox("店铺名称", list(sources), index=0)
+    store_daily = all_daily[all_daily["store"] == selected_store].copy()
+    with store_filter_cols[1]:
+        trend_range, store_custom_range = _render_time_range_selector(store_daily, "store_date_range")
+    complete = complete_daily_series(store_daily)
+    summary = build_summary(store_daily, complete)
+    products = summary["product_id"].tolist()
+    product_select_labels = _product_select_labels(selected_store, products)
+
+    store_trend = (
+        store_daily.groupby(["date", "sheet"], as_index=False)
+        .agg(
+            pay_amount=("pay_amount", "sum"),
+            sales_qty=("sales_qty", "sum"),
+            order_count=("order_count", "sum"),
+            profit=("profit", "sum"),
+        )
+        .sort_values("date", ignore_index=True)
     )
-    .sort_values("date", ignore_index=True)
-)
-trend_store = filter_trend_range(store_trend, trend_range, store_custom_range)
-render_store_overview_section(selected_store, store_daily, trend_range, trend_store, store_custom_range)
-render_category_overview_section(
-    selected_store,
-    sources.get(selected_store),
-    all_daily,
-    trend_range,
-    store_custom_range,
-)
-
-st.markdown("## 商品概览")
-
-product_filter_cols = st.columns([1.5, 2.6])
-with product_filter_cols[0]:
-    selected_product = st.selectbox(
-        "商品",
-        products,
-        index=0,
-        format_func=lambda product_id: product_select_labels.get(str(product_id), str(product_id)),
+    trend_store = filter_trend_range(store_trend, trend_range, store_custom_range)
+    render_store_overview_section(selected_store, store_daily, trend_range, trend_store, store_custom_range)
+    render_category_overview_section(
+        selected_store,
+        sources.get(selected_store),
+        all_daily,
+        trend_range,
+        store_custom_range,
     )
 
-if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
-    st.warning(
-        "该时段使用早期日报模板，没有商品 ID，也没有按商品拆分的订单量和盈亏。"
-        "这里展示的是当日全店销量、快递单量和结余，未错误归入某个单品。"
+    st.markdown("## 商品概览")
+
+    product_filter_cols = st.columns([1.5, 2.6])
+    with product_filter_cols[0]:
+        selected_product = st.selectbox(
+            "商品",
+            products,
+            index=0,
+            format_func=lambda product_id: product_select_labels.get(str(product_id), str(product_id)),
+        )
+
+    if selected_product == LEGACY_SUMMARY_PRODUCT_ID:
+        st.warning(
+            "该时段使用早期日报模板，没有商品 ID，也没有按商品拆分的订单量和盈亏。"
+            "这里展示的是当日全店销量、快递单量和结余，未错误归入某个单品。"
+        )
+
+    selected = complete[complete["product_id"] == selected_product].copy().sort_values("date")
+    product_available_dates = store_daily[store_daily["product_id"].astype(str) == str(selected_product)].copy()
+    with product_filter_cols[1]:
+        product_trend_range, product_custom_range = _render_time_range_selector(
+            product_available_dates if not product_available_dates.empty else selected,
+            "product_date_range",
+        )
+    trend_selected = filter_trend_range(selected, product_trend_range, product_custom_range)
+    selected_summary = summary[summary["product_id"] == selected_product].iloc[0]
+    latest = selected.iloc[-1]
+    render_product_overview_section(
+        selected,
+        selected_summary,
+        latest,
+        product_trend_range,
+        trend_selected,
+        product_custom_range,
     )
 
-selected = complete[complete["product_id"] == selected_product].copy().sort_values("date")
-product_available_dates = store_daily[store_daily["product_id"].astype(str) == str(selected_product)].copy()
-with product_filter_cols[1]:
-    product_trend_range, product_custom_range = _render_time_range_selector(
-        product_available_dates if not product_available_dates.empty else selected,
-        "product_date_range",
-    )
-trend_selected = filter_trend_range(selected, product_trend_range, product_custom_range)
-selected_summary = summary[summary["product_id"] == selected_product].iloc[0]
-latest = selected.iloc[-1]
-render_product_overview_section(selected, selected_summary, latest, product_trend_range, trend_selected, product_custom_range)
-
-render_changes_table(selected)
-render_product_summary_table(summary, selected_store)
+    render_changes_table(selected)
+    render_product_summary_table(summary, selected_store)
 
 render_profit_advice_floating(realtime_daily, all_daily)
 

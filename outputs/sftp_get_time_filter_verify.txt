@@ -1,0 +1,2 @@
+get /opt/tmall-dashboard/current/app.py outputs/remote_current_app_time_filter.py
+bye

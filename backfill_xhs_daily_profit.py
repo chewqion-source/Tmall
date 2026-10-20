@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from backfill_douyin_daily_profit import iter_days, numeric_sum, write_workbook
+from backfill_douyin_daily_profit import count_missing_cost_rows, iter_days, numeric_sum, write_workbook
 from xiaohongshu_profit_crawler import (
     ARK_HOME_URL,
     ARK_AFTERSALE_URL,
@@ -364,9 +364,7 @@ def run(port: int, start_day: str, end_day: str, output: str) -> int:
                 "退款金额": round(numeric_sum(profit_df, "退款金额"), 2),
                 "推广花费": round(numeric_sum(profit_df, "总推广消耗"), 2),
                 "单品结余": round(numeric_sum(profit_df, "实时盈亏"), 2),
-                "待补成本行": int((profit_df.get("成本匹配状态", pd.Series(dtype=str)).astype(str) != "已匹配").sum())
-                if not profit_df.empty
-                else 0,
+                "待补成本行": count_missing_cost_rows(profit_df),
             }
         )
 

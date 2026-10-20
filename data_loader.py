@@ -27,7 +27,7 @@ STORE_FILE_PATTERNS = {
 }
 LEGACY_SUMMARY_PRODUCT_ID = "全店汇总（早期格式）"
 MIN_REPORT_DATE: pd.Timestamp | None = None
-DISK_CACHE_SCHEMA_VERSION = "product-daily-v9-all-dates"
+DISK_CACHE_SCHEMA_VERSION = "product-daily-v10-carry-product-id"
 
 
 @dataclass(frozen=True)
@@ -317,15 +317,21 @@ def _extract_sheet(sheet: SheetData, year: int) -> list[dict[str, object]]:
                     effective_ids[row_idx] = product_id
 
     records: list[dict[str, object]] = []
+    current_product_id: str | None = None
     max_needed_col = max(product_col, quantity_col, profit_col, order_col or 0, sku_col or 0, pay_col or 0, refund_col or 0, ad_col or 0)
     for row_idx in range(header_idx + 1, len(sheet.rows)):
         row = sheet.rows[row_idx]
         if len(row) <= max_needed_col:
             continue
-        product_id = effective_ids.get(row_idx) or _normalize_product_id(row[product_col])
-        if not product_id:
-            continue
         sku = "" if sku_col is None or row[sku_col] is None else str(row[sku_col]).strip()
+        if sku in {"合计", "总计", "小计"}:
+            continue
+        raw_product_id = _normalize_product_id(row[product_col])
+        if raw_product_id:
+            current_product_id = raw_product_id
+        product_id = effective_ids.get(row_idx) or raw_product_id or current_product_id
+        if not product_id or (not raw_product_id and not sku):
+            continue
         records.append(
             {
                 "date": sheet_date,

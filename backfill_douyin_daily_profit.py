@@ -176,6 +176,14 @@ def numeric_sum(df: pd.DataFrame, column: str) -> float:
     return float(pd.to_numeric(df[column], errors="coerce").fillna(0).sum())
 
 
+def count_missing_cost_rows(profit_df: pd.DataFrame) -> int:
+    if profit_df.empty or "成本匹配状态" not in profit_df.columns:
+        return 0
+    status = profit_df["成本匹配状态"].fillna("").astype(str).str.strip()
+    exempt = {"已匹配", "仅退款", "退款无当日订单", "店铺级调整", "已取消仅计支付"}
+    return int((~status.isin(exempt)).sum())
+
+
 def allocate_store_ad_for_report(day_profit: pd.DataFrame) -> pd.DataFrame:
     df = day_profit.copy()
     store_ad = float(df.attrs.get("store_ad_cost", 0.0) or 0.0)
@@ -553,7 +561,7 @@ def main() -> int:
                 "退款金额": round(numeric_sum(profit_df, "退款金额"), 2),
                 "推广花费": round(numeric_sum(profit_df, "总推广消耗"), 2),
                 "单品结余": round(numeric_sum(profit_df, "实时盈亏"), 2),
-                "待补成本行": int((profit_df.get("成本匹配状态", pd.Series(dtype=str)).astype(str) != "已匹配").sum()) if not profit_df.empty else 0,
+                "待补成本行": count_missing_cost_rows(profit_df),
             }
         )
 

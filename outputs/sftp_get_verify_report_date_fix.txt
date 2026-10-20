@@ -1,0 +1,3 @@
+get /opt/tmall-dashboard/current/data_loader.py outputs/remote_current_data_loader.py
+get /opt/tmall-dashboard/current/upload_app.py outputs/remote_current_upload_app.py
+bye

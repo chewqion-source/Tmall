@@ -1,0 +1,7 @@
+put data_loader.py /opt/tmall-dashboard/data_loader.py
+put upload_app.py /opt/tmall-dashboard/upload_app.py
+put data_loader.py /opt/tmall-dashboard/releases/faedfe1/data_loader.py
+put upload_app.py /opt/tmall-dashboard/releases/faedfe1/upload_app.py
+put data_loader.py /opt/tmall-dashboard/current/data_loader.py
+put upload_app.py /opt/tmall-dashboard/current/upload_app.py
+bye

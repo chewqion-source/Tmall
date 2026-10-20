@@ -1,0 +1,4 @@
+put app.py /opt/tmall-dashboard/app.py
+put app.py /opt/tmall-dashboard/current/app.py
+put app.py /opt/tmall-dashboard/releases/faedfe1/app.py
+bye
